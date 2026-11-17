@@ -104,15 +104,31 @@ def _dirs(store, job_id: str, key: str):
     return jdir, jdir / "out", jdir / "edits" / key
 
 
-def _probe_dur(path: Path) -> float:
+def _probe_dur(path: Path, cache: Path = None) -> float:
+    """Duration of the source; cached next to the edits (keyed by path, size and mtime) so a reopen needs no ffprobe."""
+    try:
+        st = Path(path).stat()
+        key = f"{path}|{st.st_size}|{st.st_mtime_ns}"
+    except OSError:
+        key = ""
+    if cache and key:
+        try:
+            c = json.loads(cache.read_text(encoding="utf-8"))
+            if c.get("key") == key:
+                return float(c["dur"])
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
     res = run_cmd(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", str(path)],
         "editor source probe",
     )
     try:
-        return float((res.stdout or "0").strip() or 0)
+        dur = float((res.stdout or "0").strip() or 0)
     except ValueError:
         return 0.0
+    if cache and key and dur > 0:
+        write_json_atomic(cache, {"key": key, "dur": dur})
+    return dur
 
 
 def waveform(video: Path, lo: float, hi: float, cache: Path) -> list:
@@ -233,7 +249,7 @@ def context(store, job_id: str, key: str, lan: bool = False) -> dict:
     win_lo = float(sw.get("offset") or 0.0) if not si["original"] else t_off
     win_hi = win_lo + float(sw.get("end", 0)) - float(sw.get("start", 0))
     if si["original"]:
-        dur = _probe_dur(si["video"])
+        dur = _probe_dur(si["video"], edir / "probe.json")
         lo, hi = max(0.0, start - PAD_S), min(dur or end + PAD_S, end + PAD_S)
     else:
         lo, hi = win_lo, win_hi

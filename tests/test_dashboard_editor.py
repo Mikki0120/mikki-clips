@@ -125,3 +125,17 @@ def test_square_frame_keeps_the_chosen_crop(dash):
 
     x, y, w, h = g
     assert frame_crop(1920, 1080, (x, y, w, h), (x, y, w, h), 1080 / 900) == (w, h, x, y)
+
+
+def test_source_probe_is_cached(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    video = tmp_path / "stream.mp4"
+    video.write_bytes(b"\x00" * 100)
+    calls = []
+    monkeypatch.setattr(editor, "run_cmd", lambda argv, what: calls.append(argv) or SimpleNamespace(stdout="12.5\n"))
+    cache = tmp_path / "edits" / "clip_01" / "probe.json"
+    assert editor._probe_dur(video, cache) == 12.5
+    assert editor._probe_dur(video, cache) == 12.5 and len(calls) == 1  # the reopen reads the cache
+    video.write_bytes(b"\x00" * 200)  # a changed file is probed again
+    assert editor._probe_dur(video, cache) == 12.5 and len(calls) == 2
