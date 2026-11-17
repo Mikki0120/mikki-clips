@@ -7,7 +7,7 @@ name = "streamclipper"
 version = "5.0.1"
 description = "Turn long Twitch, YouTube and Kick streams into ready-to-post vertical clips and CapCut Desktop drafts."
 readme = "README.md"
-license = "MIT"
+license = "AGPL-3.0-or-later"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
 authors = [{ name = "Arpixa Studio" }]

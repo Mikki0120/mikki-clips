@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Licence changed from MIT to AGPL-3.0-or-later.
+- README shortened; the full documentation moved to docs/GUIDE.md.
+
 ## 5.0.1 (2026-11-17)
 ### Fixed
 - Full layout (full-cam, and the corner-cam fallback when the game screen is black): captions and the hook go to the zone of the frame that has no face (face detection on the panel), instead of a fixed low zone that could cover the chin and mouth. New export-gate row `captions_off_face` (every layout): FAIL when a caption covers a detected face on 2+ sampled frames.
