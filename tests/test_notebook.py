@@ -1,0 +1,53 @@
+from pathlib import Path
+
+import pytest
+
+nbformat = pytest.importorskip("nbformat")
+
+NB = Path(__file__).resolve().parents[1] / "notebooks" / "StreamClipper_Colab.ipynb"
+FORBIDDEN = ("gradio", "streamlit", "ngrok", "share=true", "localtunnel", "cloudflared", "pyngrok")
+
+
+def _nb():
+    return nbformat.read(str(NB), as_version=4)
+
+
+def test_notebook_is_valid():
+    nbformat.validate(_nb())
+
+
+def test_code_cells_compile():
+    code = [c for c in _nb().cells if c.cell_type == "code"]
+    assert len(code) == 10
+    for i, cell in enumerate(code, start=1):
+        lines = [ln for ln in cell.source.splitlines() if not ln.lstrip().startswith(("!", "%"))]
+        compile("\n".join(lines), f"cell {i}", "exec")
+
+
+def test_no_web_ui_or_share_links():
+    text = NB.read_text(encoding="utf-8").lower()
+    for word in FORBIDDEN:
+        assert word not in text, word
+
+
+def test_live_cell_runs_streamclipper_live():
+    live = [c.source for c in _nb().cells if c.cell_type == "code" and "Live clipping" in c.source]
+    assert len(live) == 1
+    for param in ("live_url", "stop_after_minutes", "min_score", "max_clips_per_hour", "caption_style"):
+        assert f"{param} = " in live[0] and "#@param" in live[0]
+    assert '"live", "--url"' in live[0] and "drive_out_dir(" in live[0]
+    # the rolling buffer stays on the Colab disk; only finished results are copied to Drive
+    assert '"--out", str(LIVE_WORK)' in live[0] and "LIVE_WORK = live_work_dir(" in live[0]
+    assert "sync_live_outputs(LIVE_WORK, LIVE_OUT)" in live[0]
+
+
+def test_run_cell_calls_run_pipeline():
+    src = "\n".join(c.source for c in _nb().cells if c.cell_type == "code")
+    assert "run_pipeline(" in src
+    assert "#@param" in src
+
+
+def test_caption_style_defaults_to_auto_with_the_gallery():
+    src = "\n".join(c.source for c in _nb().cells if c.cell_type == "code")
+    assert src.count('caption_style = "auto"  #@param ["auto", ') == 2
+    assert "docs/media/styles_gallery.png" in src
