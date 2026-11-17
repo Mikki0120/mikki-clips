@@ -51,7 +51,7 @@ For reference, as of 17 Nov 2026: OpusClip's free plan adds a watermark and give
 streamclipper import-draft --zip capcut_drafts.zip
 ```
 
-The notebook uses only form fields and inline previews (no web UI, no share links), so it works on the free tier. If YouTube answers "Sign in to confirm you're not a bot" (common on Colab), upload the VOD to Drive and use its path, or set a `cookies.txt` path in cell 5. A cookies file gives access to your account: never share it.
+The notebook uses only form fields and inline HTML (no web UI, no tunnels), so it works on the free tier. Cell 8 shows result cards: thumbnail, player, score, and title/description/hashtags with Copy buttons. If YouTube answers "Sign in to confirm you're not a bot" (common on Colab), upload the VOD to Drive and use its path, or set a `cookies.txt` path in cell 5. A cookies file gives access to your account: never share it.
 
 ## Quickstart: Windows PC
 
@@ -128,6 +128,38 @@ streamclipper live --url https://www.twitch.tv/<channel> --out live_clips --rend
 - Disk use stays bounded: each moment's window file in `live_clips\windows\` is deleted once its clip is made (a failed clip keeps its window for a re-run). The panel files in `panels\` stay, because CapCut drafts and the re-render command use them. `--max-disk-gb 20` (default) prints a warning when the output folder grows past 20 GB; nothing else is deleted.
 - Limits: `--max-clips-per-hour 12` (default) caps the output, `--min-score` is the same quality bar as in the VOD mode, and `--prefix` sets the file names. `--chat off` skips the Twitch/YouTube chat signal. The layout, caption and draft flags are the same as in `clip-stream`.
 - On Colab, cell **10. Live clipping (optional)** does the same: paste the stream link, set how many minutes to run, and the clips go to `MyDrive/StreamClipper/live/`. The rolling recording stays on the Colab disk (`/content/streamclipper_live/`); only finished clips, thumbnails, `clips.json`, `clips.csv` and `index.html` are copied to Drive, after every clip, so the recording never fills your Drive or its trash.
+
+### Colab without Google Drive
+
+Untick `use_google_drive` in cell 4. Nothing is mounted; the outputs stay in `/content/StreamClipper` and cell 9 downloads them as `streamclipper_outputs.zip`. Without Drive the progress is not saved: if Colab disconnects, the run starts over. With Drive, access stays inside your own Google account. StreamClipper has no server.
+
+### Drive share links (Colab, opt-in)
+
+Tick `share_on_drive` in cell 6 (default off). After the run, every finished MP4, `index.html` and `clips.csv` gets an "anyone with the link can view" link in your own Drive (files outside Drive are uploaded to `MyDrive/StreamClipper_shared/`). The links go into `clips.json`, `clips.csv` (column `drive_link`), `index.html` and the result cards. Anyone with a link can see the clip; remove sharing in Google Drive to stop it. On a PC, use the dashboard's LAN share links instead.
+
+## Dashboard
+
+```powershell
+streamclipper dashboard
+```
+
+The dashboard is a small web app on your own PC (`http://127.0.0.1:8765`). It opens in your browser; close it with Ctrl+C in the terminal. Flags: `--port 8765`, `--workspace DIR` (default `~/StreamClipper`), `--no-browser`, `--lan`, `--draft-root DIR` (CapCut draft folder for Open in CapCut).
+
+![Dashboard, light theme](media/dashboard_light.png)
+
+- **New job:** a stream link, an uploaded video or a file path on this PC; VOD, podcast or live; preset, caption and hook style (picked from the style gallery), ratio, minimum score, number of clips, AI for titles (only what is available), MP4s and CapCut drafts.
+- **Jobs:** status, stage (download, transcribe chunk k/N, scoring, render i/n), log, Cancel and Resume. One job runs at a time; the others wait in the queue. Every job is the normal `streamclipper` command in its own process, so a crash never stops the dashboard. Resume continues from the saved progress (`state.json`). After a restart, past jobs are listed again; a job that was running shows Resume.
+- **Clips:** player, score and breakdown, category, title/description/hashtags with Copy buttons, Download MP4, the export audit table, Re-render with another style (the new MP4 gets a `_2` name), Posted/Rejected, Delete and Open in CapCut. Delete moves the clip's own files to `<workspace>/trash/` (nothing is deleted for good). Open in CapCut imports the clip's draft into CapCut's draft list; CapCut must be closed ("Close CapCut first"), and the dashboard never closes it.
+- **Edit:** quick fixes before posting. Drag the In/Out handles on the waveform (they snap to word boundaries; untick Snap to words to cut freely), up to 10 s before and after the clip. Drag and resize the facecam and gameplay boxes on the source frame (their shape is locked to the panel they fill) and see the 9:16 result next to it. Pick the layout, fix misspelled caption words (timings stay), change caption and hook style, hook text, caption position and highlight colour, title, description and hashtags. **Render** makes a new MP4 through the normal render path and export gate, and shows it next to the old one; **Save as new draft** writes a CapCut draft (CapCut must be closed); **Undo changes** goes back to the last rendered version. Every version is kept in `<workspace>/jobs/<id>/edits/<clip>/`. Heavy editing stays in CapCut.
+- **Live:** start and stop a live session; clips show up while it runs, with the time from the moment to the finished clip.
+- **Settings:** workspace folder, default preset and styles, the CapCut draft folder, whether a Gemini key is set (the key itself is never shown), share links with Revoke, and the doctor table.
+- **Themes:** light and dark; the default follows Windows, the sun/moon button switches it.
+
+Workspace layout: `jobs.json`, `settings.json`, `shares.json`, `uploads/`, `trash/`, and per job `jobs/<id>/job.json`, `log.txt`, `out/` (clips.json, MP4s, thumbnails, `.gate.json` audit) and `capcut_drafts/`.
+
+**Security.** By default the dashboard listens only on 127.0.0.1, so only this PC can open it. `--lan` makes it reachable on your network: it prints a link with a random access token and a warning; requests without the token are refused. Use it only on a trusted Wi-Fi. Every change needs a per-start security token and a same-origin request, files are served only from the job folders, and jobs run without a shell. On the network, only uploaded videos can be used as a source.
+
+**Share links (`--lan` only).** The Share button of a clip or a job makes a view-only link (play and download) that works for people on the same Wi-Fi/network while the dashboard runs. Each link has its own random token, expires after 1, 7 or 30 days and can be revoked in Settings. Only a hash of the token is stored.
 
 ## Podcasts and interviews (beta)
 

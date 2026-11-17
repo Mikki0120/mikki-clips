@@ -1,6 +1,16 @@
 # Changelog
 
-## Unreleased
+## 5.1.0 (2026-11-17)
+
+### Added
+
+- `streamclipper dashboard`: a local web dashboard (standard library only, no new dependency): new jobs from a link, an upload or a file, a job queue with live progress, cancel and resume, a clips library (player, scores, copy buttons, audit table, re-render, Open in CapCut, posted/rejected, delete to trash), a live page and settings. Light and dark themes.
+- Dashboard clip editor: trim with word-snapped handles, facecam/gameplay crop boxes with a 9:16 preview, caption word fixes, styles, hook text and post text; it renders through `render --spec` and the export gate.
+- `--lan`: the dashboard on your network with an access token, and view-only share links (expiry, revoke).
+- Colab: `use_google_drive` (work without Drive, zip download at the end), opt-in `share_on_drive` Drive links, and result cards with copy buttons.
+- `<name>.gate.json` next to every rendered MP4 (the export gate table); `drive_link` column in clips.csv.
+
+### Changed
 
 - Licence changed from MIT to AGPL-3.0-or-later.
 - README shortened; the full documentation moved to docs/GUIDE.md.

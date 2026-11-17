@@ -31,7 +31,7 @@ python -m ruff format --check src tests scripts
 
 ## The Colab notebook
 
-Do not edit `notebooks/StreamClipper_Colab.ipynb` by hand. Change `tools/make_notebook.py` and run `python tools/make_notebook.py`. Colab free-tier rules apply: form fields (`#@param`) and inline HTML output only; no Gradio, Streamlit, tunnels, share links or web servers. Keep the logic in `streamclipper.colab.run_pipeline`, so it stays testable on a PC.
+Do not edit `notebooks/StreamClipper_Colab.ipynb` by hand. Change `tools/make_notebook.py` and run `python tools/make_notebook.py`. Colab free-tier rules apply: form fields (`#@param`) and inline HTML output only; no Gradio, Streamlit, tunnels or web servers; Drive share links only when the user ticks share_on_drive. Keep the logic in `streamclipper.colab.run_pipeline`, so it stays testable on a PC.
 
 ## What not to put in a pull request
 

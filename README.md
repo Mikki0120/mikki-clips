@@ -56,6 +56,10 @@ streamclipper live --url https://www.twitch.tv/<channel> --out live_clips --rend
 ```
 
 Leave it running. Each good moment becomes a clip in `live_clips\`. Press Ctrl+C to stop.
+## Dashboard
+Run `streamclipper dashboard`. It runs on your PC and opens in the browser: start jobs, watch progress, play and edit clips, re-style them, open them in CapCut and mark what you posted.
+![Dashboard](docs/media/dashboard.png)
+With `--lan`, Share makes view-only links that work for people on the same Wi-Fi/network. Details: [docs/GUIDE.md](docs/GUIDE.md#dashboard).
 
 ## Common options
 
