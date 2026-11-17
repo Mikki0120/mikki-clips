@@ -392,6 +392,7 @@ function menuBtn(items, label) {
     m.style.left = `${left + window.scrollX}px`;
     m.style.top = `${top + window.scrollY}px`;
     b.setAttribute("aria-expanded", "true");
+    m._opened = performance.now();
     openMenuEl = m;
     const first = m.querySelector(".menu-item:not([disabled])");
     if (first) first.focus({ preventScroll: true });
@@ -470,7 +471,8 @@ function setupShell() {
   });
   document.addEventListener("click", () => closeMenu());
   window.addEventListener("resize", () => closeMenu());
-  window.addEventListener("scroll", () => closeMenu(), true);
+  // a scroll right after opening (the browser bringing the button into view, images loading) keeps the menu
+  window.addEventListener("scroll", () => openMenuEl && performance.now() - openMenuEl._opened > 400 && closeMenu(), true);
 }
 
 function onSearch(fn) {
