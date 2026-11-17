@@ -12,10 +12,6 @@ Turns long Twitch, YouTube and Kick streams into ranked, ready-to-post vertical 
 
 English-first, also works with Hindi and other Whisper languages.
 
-![Frames from test renders](docs/media/demo_contact_sheet.png)
-
-*Frames from test renders of the synthetic test stream (split layout, square-frame layout, several caption styles). A demo video of a real stream will replace this.*
-
 ## What it does
 
 1. Downloads only the audio of a stream (or reads a local file) and transcribes the whole stream in 10-minute chunks with faster-whisper. Progress is saved after every chunk, so an interrupted run continues where it stopped.
