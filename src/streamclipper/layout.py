@@ -826,6 +826,54 @@ def render_speaker_panel(video_path: Path, out_dir: Path, meta: dict, opts: dict
     return {"src": fwd(out), "shots": shots, "zone": zone, "note": note}
 
 
+def render_reframe_panel(
+    video_path: Path, out_dir: Path, meta: dict, segs: list, ws: float, we: float, ratio: str, anchor=None
+) -> dict:
+    """
+    Reframe editor panel: one full-canvas composite of [ws, we] with a layout and crop window(s) per segment and
+    panned windows (reframe.build_panel_graph), source audio kept. Returns a panels dict like the 'full' branch of
+    render_layout_panels; anchor [align, y] (None = the first segment's layout default) places the captions.
+    """
+    from streamclipper import reframe
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    W, H = reframe.canvas(ratio)
+    fc = reframe.build_panel_graph(segs, ws, we, ratio, meta["width"], meta["height"])
+    tag = file_tag(video_path, json.dumps(segs, sort_keys=True), round(ws, 3), round(we, 3), ratio, "rf1")
+    out = out_dir / f"{Path(video_path).stem}_reframe_{W}x{H}_{tag}.mp4"
+    if not out.is_file():
+        _encode_panel(video_path, out, fc, _ss_args(ws, we - ws), True, "reframe panel render")
+    anchor = list(anchor) if anchor else reframe.auto_anchor(segs[0]["layout"], ratio)
+    caption_y, banner_y = -0.45, 0.55
+    if anchor:
+        caption_y = capcut_y(anchor[0], anchor[1], H)
+        banner_y = caption_y if anchor[1] < FULL_BANDS["upper"][0] else banner_y
+    keys = sum(len(s.get("keys") or []) for s in segs)
+    return {
+        "layout": "full",
+        "main_src": fwd(out),
+        "main_pos_y": 0.0,
+        "overlay_src": None,
+        "overlay_pos_y": 0.0,
+        "overlay_loop": False,
+        "overlay_dur": None,
+        "caption_y": caption_y,
+        "banner_y": banner_y,
+        "caption_anchor": anchor,
+        "caption_note": f"reframe: {len(segs)} segment(s), {keys} keyframe(s)",
+    }
+
+
+def with_caption_anchor(panels: dict, anchor, ratio: str) -> dict:
+    """Panels of any layout with the editor's caption anchor [align, y] (canvas px) instead of the layout's own."""
+    if not anchor:
+        return panels
+    H = 1920 if ratio == "9:16" else 1080
+    out = dict(panels, caption_anchor=[int(anchor[0]), int(anchor[1])])
+    out["caption_y"] = capcut_y(int(anchor[0]), int(anchor[1]), H)
+    return out
+
+
 def render_layout_panels(
     video_path: Path, meta: dict, opts: dict, cam_box: list, game_box: list, start_s: float, dur_s: float, out_dir: Path
 ) -> dict:

@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 
 from streamclipper import env as _env
+from streamclipper import reframe
 from streamclipper.captions.styles import (
     AUTO_STYLE,
     CAPTION_POSITIONS,
@@ -40,8 +41,9 @@ LAYOUT_LABELS = {
 }
 PAD_S = 10.0  # the trim timeline shows this much before and after the clip
 MIN_DUR, MAX_DUR = 1.0, 59.5
-MIN_BOX = 64
-ASPECT_TOL = 0.03
+MIN_BOX = reframe.MIN_BOX
+ASPECT_TOL = reframe.ASPECT_TOL
+THUMB_W = 160  # px width of one frame of the timeline thumbnail strip (one frame per second)
 MAX_WORD, MAX_HOOK, MAX_TITLE, MAX_DESC, MAX_TAGS, MAX_TAG = 40, 80, 100, 500, 15, 40
 WAVE_STEP = 0.1  # seconds per waveform bar
 
@@ -308,6 +310,26 @@ def context(store, job_id: str, key: str, lan: bool = False) -> dict:
         "wave": {"lo": round(lo, 3), "step": WAVE_STEP, "peaks": waveform(si["video"], lo, hi, edir / "wave.json")},
         "layouts": layouts,
         "layout_labels": LAYOUT_LABELS,
+        "canvas": list(reframe.canvas(ratio)),
+        "aspects": {name: reframe.window_aspects(name, ratio) for name in LAYOUTS},
+        "panel_rects": {name: [list(r) for r in reframe.panel_rects(name, ratio)] for name in LAYOUTS},
+        "limits": {
+            "min_seg": reframe.MIN_SEG,
+            "max_segs": reframe.MAX_SEGS,
+            "max_keys": reframe.MAX_KEYS,
+            "smooth_s": reframe.SMOOTH_S,
+            "fps": reframe.FPS,
+            "anchor_y": [200, 1600] if ratio == "9:16" else [100, 980],
+        },
+        "thumbs": {
+            "url": f"/api/jobs/{job_id}/clips/{key}/thumbs",
+            "lo": round(lo, 3),
+            "step": 1.0,
+            "n": _thumb_count(lo, hi),
+            "w": THUMB_W,
+            "h": max(2, int(round(THUMB_W * vh / max(1, vw) / 2)) * 2),
+        },
+        "faces": _cached_faces(edir),
         "caption_styles": [AUTO_STYLE, *STYLES],
         "style_info": {
             n: {
@@ -332,6 +354,85 @@ def context(store, job_id: str, key: str, lan: bool = False) -> dict:
     }
 
 
+def _thumb_count(lo: float, hi: float) -> int:
+    return max(1, int(math.ceil(hi - lo - 1e-6)))
+
+
+def _cached_faces(edir: Path) -> list:
+    try:
+        return json.loads((edir / "reframe.json").read_text(encoding="utf-8")).get("faces") or []
+    except (OSError, ValueError, AttributeError):
+        return []
+
+
+def thumbs(store, job_id: str, key: str, lan: bool = False) -> Path:
+    """
+    Thumbnail strip of the editor timeline: one THUMB_W px frame per second of the bounds, in one row, made by
+    one ffmpeg call (fps=1, scale, tile) and cached in edits/<key>/thumbs.jpg (keyed by video, size, mtime, bounds).
+    """
+    ctx = context(store, job_id, key, lan)
+    _jdir, out, edir = _dirs(store, job_id, key)
+    video = source_info(_load_plan(out, key), lan_roots(store) if lan else None)["video"]
+    lo, hi = ctx["bounds"]
+    n = _thumb_count(lo, hi)
+    jpg, meta = edir / "thumbs.jpg", edir / "thumbs.json"
+    try:
+        st = Path(video).stat()
+        ckey = f"{video}|{st.st_size}|{st.st_mtime_ns}|{lo:.3f}|{hi:.3f}|{n}|{THUMB_W}"
+    except OSError:
+        raise ToolError("The clip's source video is gone.", "run the job again") from None
+    try:
+        if jpg.is_file() and json.loads(meta.read_text(encoding="utf-8")).get("key") == ckey:
+            return jpg
+    except (OSError, ValueError, AttributeError):
+        pass
+    edir.mkdir(parents=True, exist_ok=True)
+    tmp = edir / "thumbs.part.jpg"
+    run_cmd(
+        ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", f"{lo:.3f}", "-t", f"{hi - lo:.3f}"]
+        + ["-i", str(video), "-an", "-vf", f"fps=1,scale={THUMB_W}:-2,tile={n}x1", "-frames:v", "1"]
+        + ["-q:v", "6", str(tmp)],
+        "editor thumbnails",
+    )
+    if not tmp.is_file():
+        raise ToolError("Could not make the timeline thumbnails.", "the source video may be damaged")
+    tmp.replace(jpg)
+    write_json_atomic(meta, {"key": ckey})
+    return jpg
+
+
+def auto_reframe(ctx: dict, form: dict, video: Path, edir: Path) -> dict:
+    """
+    Auto-reframe of an edit (runs on a background thread of the dashboard): faces every 0.5 s over the cut
+    (vision.track_faces), then reframe.propose_keys. Result {segments, faces, note}, cached in edits/<key>/reframe.json.
+    """
+    from streamclipper import vision
+
+    segs = reframe.normalize_segments(form)
+    vw, vh, ratio = ctx["width"], ctx["height"], ctx["ratio"]
+    full_game = ctx["layouts"]["full"]["game"]
+    for s in segs:  # an old speaker form has no window: start from the full layout's crop
+        for which, aspect in reframe.window_aspects(s["layout"], ratio).items():
+            if not (s.get("windows") or {}).get(which):
+                s.setdefault("windows", {})[which] = reframe.lock_aspect(full_game, aspect, vw, vh)
+    track = vision.track_faces(video, form["start"], form["end"], 0.5, vw, vh)
+    if track is None:
+        raise ToolError(
+            "Auto-reframe needs face detection (OpenCV).",
+            'install the vision extra: pip install "streamclipper[vision]"',
+        )
+    out, note = reframe.propose_keys(segs, track["times"], track["faces"], vw, vh, ratio)
+    faces = [
+        {"t": t, "box": [round(f[0][0] * vw), round(f[0][1] * vh), round(f[0][2] * vw), round(f[0][3] * vh)]}
+        for t, f in zip(track["times"], track["faces"], strict=False)
+        if f
+    ]
+    res = {"segments": out, "faces": faces, "note": note}
+    edir.mkdir(parents=True, exist_ok=True)
+    write_json_atomic(edir / "reframe.json", res)
+    return res
+
+
 def _read_form(p: Path):
     try:
         return json.loads(p.read_text(encoding="utf-8")).get("editor_form")
@@ -349,18 +450,7 @@ def _num(v, what: str) -> float:
     return f
 
 
-def _box(v, what: str, vw: int, vh: int, aspect) -> list:
-    if not isinstance(v, (list, tuple)) or len(v) != 4:
-        raise ToolError(f"The {what} box is missing.", "click Reset to auto-detected")
-    x, y, w, h = (int(round(_num(n, f"The {what} box"))) for n in v)
-    x, y, w, h = x & ~1, y & ~1, w & ~1, h & ~1
-    if w < MIN_BOX or h < MIN_BOX:
-        raise ToolError(f"The {what} box is too small.", f"make it at least {MIN_BOX} x {MIN_BOX} pixels")
-    if x < 0 or y < 0 or x + w > vw or y + h > vh:
-        raise ToolError(f"The {what} box goes outside the video frame.", "drag it back inside the frame")
-    if aspect and abs((w / h) / aspect - 1) > ASPECT_TOL:
-        raise ToolError(f"The {what} box has the wrong shape for this layout.", "resize it with the corner handle")
-    return [x, y, w, h]
+_box = reframe.check_box  # the crop box rules live in reframe.py (shared with the segment checks)
 
 
 def _text(v, what: str, limit: int, allow_newline: bool = False) -> str:
@@ -385,23 +475,33 @@ def validate(ctx: dict, edit: dict) -> dict:
         raise ToolError("The clip is too short.", f"keep at least {MIN_DUR:g} s")
     if end - start > MAX_DUR:
         raise ToolError(f"The clip is {end - start:.1f} s long.", f"keep it at most {MAX_DUR:g} s (Shorts/Reels limit)")
-    layout = edit.get("layout")
-    if layout not in LAYOUTS:
-        raise ToolError("Unknown layout.", "pick one from the list")
     ratio = ctx["ratio"]
-    if layout in ("square-frame", "caption-punch") and ratio != "9:16":
-        raise ToolError("This layout is 9:16 only.", "pick split or full for a 1:1 clip")
-    if layout == "speaker":
-        w0, w1 = ctx["window"]
-        if start < w0 - 0.05 or end > w1 + 0.05:
-            raise ToolError(
-                f"The speaker layout can only use the clip's window ({w0:.1f}-{w1:.1f} s).",
-                "move the handles inside it",
-            )
-    a = aspects(layout, ratio)
-    vw, vh = ctx["width"], ctx["height"]
-    cam = _box(edit.get("cam"), "facecam", vw, vh, a["cam"]) if a["cam"] else None
-    game = _box(edit.get("game"), "gameplay", vw, vh, a["game"]) if a["game"] else None
+    segs_in, segs = edit.get("segments"), None
+    if reframe.uses_reframe(segs_in):
+        # 2+ segments or keyframes: the reframe render; the first segment stands in for the old fields
+        segs = reframe.validate_segments(segs_in, ctx, start, end)
+        layout, cam, game = segs[0]["layout"], segs[0]["windows"]["cam"], segs[0]["windows"]["game"]
+    else:
+        if isinstance(segs_in, list) and len(segs_in) == 1 and isinstance(segs_in[0], dict):
+            w0 = segs_in[0].get("windows") if isinstance(segs_in[0].get("windows"), dict) else {}
+            edit = dict(edit, layout=segs_in[0].get("layout"), cam=w0.get("cam"), game=w0.get("game"))
+        layout = edit.get("layout")
+        if layout not in LAYOUTS:
+            raise ToolError("Unknown layout.", "pick one from the list")
+        if layout in ("square-frame", "caption-punch") and ratio != "9:16":
+            raise ToolError("This layout is 9:16 only.", "pick split or full for a 1:1 clip")
+        if layout == "speaker":
+            w0, w1 = ctx["window"]
+            if start < w0 - 0.05 or end > w1 + 0.05:
+                raise ToolError(
+                    f"The speaker layout can only use the clip's window ({w0:.1f}-{w1:.1f} s).",
+                    "move the handles inside it",
+                )
+        a = aspects(layout, ratio)
+        vw, vh = ctx["width"], ctx["height"]
+        cam = _box(edit.get("cam"), "facecam", vw, vh, a["cam"]) if a["cam"] else None
+        game = _box(edit.get("game"), "gameplay", vw, vh, a["game"]) if a["game"] else None
+    anchor = reframe.validate_anchor(edit.get("caption_anchor"), ratio)
     words = edit.get("words")
     if not isinstance(words, list) or len(words) != len(ctx["words"]):
         raise ToolError("The caption words do not match the clip.", "reload the editor")
@@ -431,7 +531,7 @@ def validate(ctx: dict, edit: dict) -> dict:
         t = _text(t, "hashtag", MAX_TAG).strip()
         if t:
             clean_tags.append(t if t.startswith("#") else "#" + t)
-    return {
+    out = {
         "start": round(start, 3),
         "end": round(end, 3),
         "layout": layout,
@@ -446,7 +546,11 @@ def validate(ctx: dict, edit: dict) -> dict:
         "title": _text(edit.get("title"), "title", MAX_TITLE).strip(),
         "description": _text(edit.get("description"), "description", MAX_DESC, allow_newline=True).strip(),
         "hashtags": clean_tags,
+        "caption_anchor": anchor,
     }
+    if segs:
+        out["segments"] = segs
+    return out
 
 
 def clip_spec(ctx: dict, form: dict, plan: dict, video: Path, base_name: str) -> dict:
@@ -470,6 +574,16 @@ def clip_spec(ctx: dict, form: dict, plan: dict, video: Path, base_name: str) ->
     }
     if form["highlight_color"]:
         spec["highlight_color"] = form["highlight_color"]
+    if form.get("caption_anchor"):
+        spec["caption_anchor"] = form["caption_anchor"]
+        spec["caption_position"] = "auto"  # a dragged caption wins over the position list
+    if form.get("segments"):
+        # reframe render (layout.render_reframe_panel): one composite full-canvas panel; the first segment's
+        # gameplay window is the plan's game box
+        spec["layout"] = "full"
+        spec["game_crop"] = ",".join(str(v) for v in form["segments"][0]["windows"]["game"])
+        spec["reframe_segments"] = form["segments"]
+        return spec
     spec.update(LAYOUTS[form["layout"]])
     if form["game"]:
         spec["game_crop"] = ",".join(str(v) for v in form["game"])

@@ -19,6 +19,7 @@
 - **Any length.** 8-10 hour streams work. Progress is saved, so a crash or Colab disconnect resumes.
 - **Ready to post.** 1080x1920 MP4s with animated captions (15 styles), a hook headline and a thumbnail.
 - **Editable.** Every clip is also a CapCut Desktop project, with each layer on its own track.
+- **Reframe editor.** Split a clip into parts and choose what each part shows: its own layout, crop and keyframed pan, or Auto-reframe to follow the face.
 - **Free, no watermark, no limits.** Runs on free Google Colab or your own PC. No paid AI needed.
 
 Works with Twitch, YouTube and Kick links, or a local video file. Made for gaming streams; podcasts are in beta.
@@ -57,7 +58,7 @@ streamclipper live --url https://www.twitch.tv/<channel> --out live_clips --rend
 
 Leave it running. Each good moment becomes a clip in `live_clips\`. Press Ctrl+C to stop.
 ## Dashboard
-Run `streamclipper dashboard`. It runs on your PC and opens in the browser: start jobs, watch progress, play and edit clips, re-style them, open them in CapCut and mark what you posted.
+Run `streamclipper dashboard`. It runs on your PC and opens in the browser: paste a link on Home, watch your projects, play clips, reframe them in the editor, re-style them, open them in CapCut and mark what you posted.
 ![Dashboard](docs/media/dashboard.png)
 With `--lan`, Share makes view-only links that work for people on the same Wi-Fi/network. Details: [docs/GUIDE.md](docs/GUIDE.md#dashboard).
 
@@ -95,6 +96,6 @@ Close CapCut, run `clip-stream` without `--no-draft`, then open CapCut. Your cli
 
 ## Legal
 
-Only clip streams you have permission to clip, such as a streamer's official clipping program. CapCut effects are copied from your own CapCut install. Fonts are under the OFL or Apache licences.
+Only clip streams you have permission to clip, such as a streamer's official clipping program. CapCut effects are copied from your own CapCut install. Fonts are under the OFL or Apache licences; dashboard icons are from Lucide (ISC).
 
 Code licence: [AGPL-3.0](LICENSE). You can use, change and share it for free. If you run a changed version as an online service, you must share your source code too.

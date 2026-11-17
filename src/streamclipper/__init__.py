@@ -1,3 +1,3 @@
 """streamclipper: turn long streams into ready-to-post vertical clips and CapCut Desktop drafts."""
 
-__version__ = "5.1.0"
+__version__ = "5.2.0"

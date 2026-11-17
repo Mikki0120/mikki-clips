@@ -286,4 +286,9 @@ def normalize_clip_spec(spec: dict, base_dir: Path) -> dict:
             raise ToolError(f"Unknown glow_preset '{gp}'.", "use glowing_neon, deep_glow or glowing_rays")
         out["glow_preset"] = GLOW_ALIASES[gp]
     out["trim_silence"] = bool(spec.get("trim_silence", True))
+    # reframe editor fields: checked against the probed source in build_high_level_clip (reframe.validate_*)
+    if spec.get("reframe_segments") is not None and not isinstance(spec["reframe_segments"], list):
+        raise ToolError("'reframe_segments' must be a list of segments.", "save the edit again in the dashboard editor")
+    out["reframe_segments"] = spec.get("reframe_segments") or None
+    out["caption_anchor"] = spec.get("caption_anchor") or None
     return out

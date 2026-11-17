@@ -147,13 +147,45 @@ The dashboard is a small web app on your own PC (`http://127.0.0.1:8765`). It op
 
 ![Dashboard, light theme](media/dashboard_light.png)
 
-- **New job:** a stream link, an uploaded video or a file path on this PC; VOD, podcast or live; preset, caption and hook style (picked from the style gallery), ratio, minimum score, number of clips, AI for titles (only what is available), MP4s and CapCut drafts.
-- **Jobs:** status, stage (download, transcribe chunk k/N, scoring, render i/n), log, Cancel and Resume. One job runs at a time; the others wait in the queue. Every job is the normal `streamclipper` command in its own process, so a crash never stops the dashboard. Resume continues from the saved progress (`state.json`). After a restart, past jobs are listed again; a job that was running shows Resume.
-- **Clips:** player, score and breakdown, category, title/description/hashtags with Copy buttons, Download MP4, the export audit table, Re-render with another style (the new MP4 gets a `_2` name), Posted/Rejected, Delete and Open in CapCut. Delete moves the clip's own files to `<workspace>/trash/` (nothing is deleted for good). Open in CapCut imports the clip's draft into CapCut's draft list; CapCut must be closed ("Close CapCut first"), and the dashboard never closes it.
-- **Edit:** quick fixes before posting. Drag the In/Out handles on the waveform (they snap to word boundaries; untick Snap to words to cut freely), up to 10 s before and after the clip. Drag and resize the facecam and gameplay boxes on the source frame (their shape is locked to the panel they fill) and see the 9:16 result next to it. Pick the layout, fix misspelled caption words (timings stay), change caption and hook style, hook text, caption position and highlight colour, title, description and hashtags. **Render** makes a new MP4 through the normal render path and export gate, and shows it next to the old one; **Save as new draft** writes a CapCut draft (CapCut must be closed); **Undo changes** goes back to the last rendered version. Every version is kept in `<workspace>/jobs/<id>/edits/<clip>/`. Heavy editing stays in CapCut.
+The left sidebar has five pages (on a phone it becomes a bar at the bottom). `/` jumps to the search box, `?` lists the keyboard shortcuts.
+
+- **Home:** paste a stream link or drop a video, then **Get clips**. One click works with your saved defaults; **Advanced** has the mode (VOD, podcast, live; Auto picks live for `twitch.tv/<channel>` and `kick.com/<channel>`), preset, ratio, minimum score, number of clips, AI for titles (only what is available), MP4s and CapCut drafts. The first time, a **Set-up check** card runs the doctor in the background and shows ffmpeg, GPU (optional, CPU works, just slower) and CapCut (optional, only for drafts) with fix links. Your last four projects are listed below.
+- **Projects:** one card per job with thumbnail, source, status, progress ring and clip count; filter by All / Running / Done / Failed or search. Cancel and Resume are in the card menu. One job runs at a time; the others wait in the queue. Every job is the normal `streamclipper` command in its own process, so a crash never stops the dashboard. Resume continues from the saved progress (`state.json`). After a restart, past jobs are listed again; a job that was running shows Resume.
+- **Project page (clips):** vertical cards that play on hover, a score badge (hover for the breakdown), category, title and length. Quick actions: Edit, Download, Copy caption, Share (`--lan` only) and Open in CapCut; the **...** menu has Posted, Rejected, Re-render with another style (the new MP4 gets a `_2` name), the export audit table and Delete. Sort by score or time; filter by category or posted status. Delete moves the clip's own files to `<workspace>/trash/` (nothing is deleted for good). Open in CapCut imports the clip's draft into CapCut's draft list; CapCut must be closed ("Close CapCut first"), and the dashboard never closes it.
+- **Edit:** the reframe editor, see below.
 - **Live:** start and stop a live session; clips show up while it runs, with the time from the moment to the finished clip.
-- **Settings:** workspace folder, default preset and styles, the CapCut draft folder, whether a Gemini key is set (the key itself is never shown), share links with Revoke, and the doctor table.
+- **Styles:** every caption and hook style as a preview tile; **Set as default** saves it for new jobs.
+- **Settings:** defaults, workspace folder, the CapCut draft folder, whether a Gemini key is set (the key itself is never shown), share links with Revoke, and the system check (doctor table).
 - **Themes:** light and dark; the default follows Windows, the sun/moon button switches it.
+
+### Reframe editor
+
+Open a clip with **Edit**. The source video (16:9) is on the left with the crop window(s), the output (9:16 or 1:1) on the right. The output is drawn live from the source in the browser with the same maths as the render, so what you see is what you get (only the caption look is approximate).
+
+- **Crop windows.** Drag a window to move it, drag its corner to resize. Its shape is locked to the panel it fills, it stays inside the frame and is at least 64 x 64 px. The split layout has two windows: Facecam (top panel) and Gameplay (bottom panel).
+- **Segments.** **Split** (or `S`) cuts the clip at the playhead; each segment has its own layout (full, split, square frame, caption punch, speaker) and its own windows. The segment under the playhead is the active one; click a block on the timeline to jump to it. **Merge** joins a segment with the one before it. A segment is at least 0.5 s long; a clip has at most 20 segments.
+- **Keyframes.** **Keyframe** adds one at the playhead; with keyframes, dragging the window at the playhead moves the crop at that time (a new keyframe is added if there is none). Drag a diamond on the timeline to change its time, `Delete` removes the one at the playhead. Easing is smooth or linear; at most 12 keyframes per segment. Keyframes **pan** a window; they do not zoom. ffmpeg's `crop` filter evaluates the position for every frame but the size only once, and scaling with a changing size needs ffmpeg 5 (Colab has 4.4). To change the size, split and resize the window in the new segment; a resize applies to all keyframes of the segment.
+- **Joins.** The marker between two segments is a cut (`|`, default) or smooth (`~`): the last 0.5 s of the left segment eases its window to the right segment's first position. Smooth needs the same layout and the same window size on both sides; otherwise the marker is disabled.
+- **Auto-reframe** finds the face every 0.5 s (OpenCV, `pip install "streamclipper[vision]"`) and proposes keyframes about once a second so the window follows it (speed-limited and smoothed; in split only the facecam window moves). It runs in the background. **Reset to auto-detected** puts the active segment's window back to the detected crop without keyframes.
+- **Timeline:** thumbnails, waveform, the In/Out handles (they snap to word edges; untick Snap to words to cut freely, up to 10 s before and after the clip), segment blocks, keyframe diamonds and a chip per caption word (click it to edit the word).
+- **Captions.** Drag the captions on the output up or down; they snap to a safe zone (top, upper middle, lower, and the seam in split). A chip warns when the caption would cover a face (found by Auto-reframe, or the facecam panel); the export gate checks it again. **Auto position** gives the layout's own place back. Caption and hook styles are picked from the preview tiles and show at once. Fix misspelled words in place; timings stay.
+- **Undo / Redo:** `Ctrl+Z` and `Ctrl+Shift+Z` (or `Ctrl+Y`), up to 100 steps. **Discard changes** drops the saved edit and goes back to the last rendered version.
+- **Render** makes a new MP4 through the normal render path and export gate (named `_2`, `_3`, ...). **Versions** lists every render and draft; **Compare** plays the original and the chosen version side by side (play, pause and seek together) with both audit tables. **Save as CapCut draft** writes a draft (CapCut must be closed). Every version is kept in `<workspace>/jobs/<id>/edits/<clip>/`.
+
+**How a segmented edit is rendered.** One ffmpeg graph per edit: the source is read once at 30 fps, each segment is cut on exact frame numbers (`trim`), each window is cropped with time expressions for its pan (`crop=w:h:x='...':y='...'`), scaled, stacked for split, and the segments are joined with `concat` into one full-canvas panel with the source audio as one continuous stream. The normal MP4 render then adds captions, loudness and the export gate. This keeps the timeline length exact and the audio free of gaps or loudness steps at the joins, and it works on ffmpeg 4.4 to 8. It was chosen over one MP4 per segment plus the concat demuxer (AAC gaps and loudness steps at each join) and over `sendcmd` (behaviour differs between ffmpeg versions). Captions keep the source time of each word, so they stay in sync across segments; each word belongs to the segment it starts in. An edit with one segment and no keyframes uses the old one-layout render.
+
+**CapCut drafts of a segmented edit:** the composite panel is the video, cut into one video segment per editor segment. Crops and pans are baked into the picture; the draft has no CapCut keyframes. The podcast speaker layout's side-by-side stacking stays a one-segment feature.
+
+| Key | Action |
+| --- | --- |
+| `/` | Search projects and clips |
+| `?` | Show the shortcuts |
+| `Space` | Play or pause |
+| `J` / `K` / `L` | Back 5 s / pause / forward 5 s (`L` while playing = 2x) |
+| `S` | Split at the playhead |
+| `[` / `]` | Set the start / end at the playhead |
+| `Delete` | Delete the keyframe at the playhead |
+| `Ctrl+Z` / `Ctrl+Shift+Z` | Undo / redo |
 
 Workspace layout: `jobs.json`, `settings.json`, `shares.json`, `uploads/`, `trash/`, and per job `jobs/<id>/job.json`, `log.txt`, `out/` (clips.json, MP4s, thumbnails, `.gate.json` audit) and `capcut_drafts/`.
 
@@ -438,6 +470,7 @@ Each clip also gets `<name>.clip.json` (the clip plan); `render --spec <name>.cl
 - **Permission.** Clip only streams you have permission to clip: the streamer's permission or an official clipping program. Follow the rules of the platform you post on and credit the streamer as they require.
 - **CapCut assets.** Text glow shaders and transitions are used from your own CapCut install's cache. They are CapCut's property and are not part of this repository.
 - **Fonts.** Barlow Condensed, Anton, Baloo 2, Montserrat, Bebas Neue, Poppins, Bangers and Noto Emoji are under the SIL Open Font License 1.1; Luckiest Guy is under the Apache License 2.0. See `src/streamclipper/data/templates/fonts/FONTS.md` and `fonts/licenses/`.
+- **Icons.** The dashboard icons are from [Lucide](https://lucide.dev) (ISC licence; the licence text is in `src/streamclipper/dashboard/static/icons.js`).
 - **Sound effects.** The bundled SFX in `sfx_generated/` were made with ffmpeg for this project (CC0).
 - **Cookies and keys.** The tool never prints, logs or saves cookies or `GEMINI_API_KEY`. Do not commit them.
 - **Code.** AGPL-3.0 licence, see `LICENSE`.

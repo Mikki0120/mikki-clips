@@ -139,3 +139,135 @@ def test_source_probe_is_cached(tmp_path, monkeypatch):
     assert editor._probe_dur(video, cache) == 12.5 and len(calls) == 1  # the reopen reads the cache
     video.write_bytes(b"\x00" * 200)  # a changed file is probed again
     assert editor._probe_dur(video, cache) == 12.5 and len(calls) == 2
+
+
+def _two_segments(c):
+    lay = c["layouts"]
+    g = lay["full"]["game"]
+    moved = [min(1920 - g[2], g[0] + 200) & ~1, g[1], g[2], g[3]]
+    return [
+        {
+            "start": 1.0,
+            "end": 12.0,
+            "layout": "split",
+            "windows": {"cam": lay["split"]["cam"], "game": lay["split"]["game"]},
+        },
+        {
+            "start": 12.0,
+            "end": 25.0,
+            "layout": "full",
+            "windows": {"cam": None, "game": g},
+            "keys": [{"t": 15.0, "game": moved}, {"t": 20.0, "game": g}],
+            "ease": "smooth",
+            "boundary": "cut",
+        },
+    ]
+
+
+def test_two_segment_edit_saves_and_renders(dash):
+    c = _ctx(dash)
+    url = f"/api/jobs/{dash.job}/clips/clip_01/edit"
+    e = _edit(c, segments=_two_segments(c), caption_anchor=[2, 1400])
+    st, r = dash.json("POST", url, {"action": "save", "edit": e})
+    assert st == 200, r
+    pend = _ctx(dash)["pending"]
+    assert len(pend["segments"]) == 2 and pend["caption_anchor"] == [2, 1400] and pend["layout"] == "split"
+    st, r = dash.json("POST", url, {"action": "render", "edit": e})
+    assert st == 200, r
+    dash.wait(r["job"])
+    spec = json.loads((dash.srv.ws / "jobs" / dash.job / "edits" / "clip_01" / "v1.json").read_text(encoding="utf-8"))
+    assert spec["layout"] == "full" and len(spec["reframe_segments"]) == 2 and spec["caption_anchor"] == [2, 1400]
+    assert spec["reframe_segments"][1]["keys"][0]["t"] == 15.0 and spec["caption_position"] == "auto"
+    # one segment without keyframes is the old form: no reframe fields, the old layout path
+    one = _edit(c, segments=_two_segments(c)[:1], end=25.0)
+    one["segments"][0]["end"] = 25.0
+    form = editor.validate(c, one)
+    assert "segments" not in form and form["layout"] == "split"
+    assert "reframe_segments" not in editor.clip_spec(c, form, {}, "v.mp4", "clip_01")
+
+
+def test_bad_segments_are_400(dash):
+    c = _ctx(dash)
+    url = f"/api/jobs/{dash.job}/clips/clip_01/edit"
+    g = c["layouts"]["full"]["game"]
+    cases = []
+    s = _two_segments(c)
+    s[1]["start"] = 11.0  # overlap
+    cases.append(s)
+    s = _two_segments(c)
+    s[1]["start"] = 13.0  # gap
+    cases.append(s)
+    s = _two_segments(c)
+    s[1]["windows"]["game"] = [1900, 0, g[2], g[3]]  # outside
+    cases.append(s)
+    s = _two_segments(c)
+    s[1]["windows"]["game"] = [0, 0, 36, 64]  # too small
+    cases.append(s)
+    s = _two_segments(c)
+    s[1]["keys"] = [{"t": 13.0 + i * 0.5, "game": g} for i in range(13)]  # too many keyframes
+    cases.append(s)
+    for segs in cases:
+        st, r = dash.json("POST", url, {"action": "render", "edit": _edit(c, segments=segs)})
+        assert st == 400 and r["error"] and r["hint"], segs
+    st, r = dash.json("POST", url, {"action": "save", "edit": _edit(c, caption_anchor=[2, 50])})
+    assert st == 400 and "edge" in r["error"]
+
+
+def test_auto_reframe_runs_in_the_background(dash, monkeypatch):
+    import time
+
+    from streamclipper import vision
+
+    c = _ctx(dash)
+    base = f"/api/jobs/{dash.job}/clips/clip_01"
+    times = [1.0 + 0.5 * k for k in range(49)]
+
+    def fake_track(video, start, end, step, vw, vh):
+        time.sleep(0.2)
+        return {"times": times, "faces": [[[0.1 + 0.01 * k, 0.3, 0.2 + 0.01 * k, 0.5]] for k in range(49)]}
+
+    monkeypatch.setattr(vision, "track_faces", fake_track)
+    st, r = dash.json("POST", f"{base}/reframe", {"edit": _edit(c, segments=_two_segments(c))})
+    assert st == 202 and r["running"] is True
+    for _ in range(100):
+        st, r = dash.json("GET", f"{base}/reframe")
+        if not r["running"]:
+            break
+        time.sleep(0.05)
+    assert st == 200 and not r["error"] and len(r["segments"]) == 2 and r["faces"], r
+    assert r["segments"][0]["keys"] and all(set(k) == {"t", "cam", "game"} for k in r["segments"][0]["keys"])
+    assert _ctx(dash)["faces"]  # cached for the caption face warning
+    monkeypatch.setattr(vision, "track_faces", lambda *a: None)
+    st, r = dash.json("POST", f"{base}/reframe", {"edit": c["current"]})
+    assert st == 202
+    for _ in range(100):
+        r = dash.json("GET", f"{base}/reframe")[1]
+        if not r["running"]:
+            break
+        time.sleep(0.05)
+    assert "OpenCV" in r["error"] and "streamclipper[vision]" in r["hint"]
+    assert dash.json("POST", f"{base}/reframe", {"edit": "x"})[0] == 400
+
+
+def test_thumbs_sprite_is_made_once(dash, monkeypatch):
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from streamclipper.util import ToolError
+
+    calls = []
+
+    def fake_run(argv, what, **kw):
+        if "editor thumbnails" != what:
+            raise ToolError("no ffmpeg in this test")
+        calls.append(argv)
+        Path(argv[-1]).write_bytes(b"\xff\xd8fakejpg")
+        return SimpleNamespace(stdout="", stderr="")
+
+    monkeypatch.setattr(editor, "run_cmd", fake_run)
+    c = _ctx(dash)
+    assert c["thumbs"]["n"] == 30 and c["thumbs"]["w"] == 160 and c["thumbs"]["h"] == 90
+    for _ in range(2):
+        st, h, body = dash.req("GET", c["thumbs"]["url"])
+        assert st == 200 and h["Content-Type"] == "image/jpeg" and body == b"\xff\xd8fakejpg"
+    assert len(calls) == 1 and "tile=30x1" in " ".join(calls[0])

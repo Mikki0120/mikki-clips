@@ -5,6 +5,7 @@ import json
 import math
 from pathlib import Path
 
+from streamclipper import reframe
 from streamclipper.asr import read_wav16k
 from streamclipper.audio import (
     _mmss,
@@ -47,7 +48,9 @@ from streamclipper.layout import (
     detect_player_and_webcam,
     probe_video,
     render_layout_panels,
+    render_reframe_panel,
     sample_exposure,
+    with_caption_anchor,
 )
 from streamclipper.options import clip_boxes, clip_layout, normalize_clip_spec, resolve_options
 from streamclipper.paths import ENV_FILE
@@ -236,13 +239,27 @@ def build_high_level_clip(spec: dict, base_dir: Path, args) -> dict:
 
     cam_box, game_box = clip_boxes(src, meta, opts)
     ws, we = max(0.0, start - 1.0), min(meta["dur"], end + 1.0)
-    panels = render_layout_panels(src, meta, opts, cam_box, game_box, ws, we - ws, work_dir / "panels")
-    pieces = [(start, end)]
-    if norm["trim_silence"] and meta["has_audio"]:
-        env = audio_envelope(src, work_dir / "analysis")
-        islands = islands_from_env(env, -48.0, 0.20)
-        trimmed = trim_pauses({"start": start, "end": end}, islands, 0.55)
-        pieces = [(s["src_s"], s["src_e"]) for s in snap_segments(trimmed, norm["words"], ws, we)]
+    anchor = reframe.validate_anchor(norm.get("caption_anchor"), opts["ratio"])
+    rsegs = norm.get("reframe_segments")
+    if reframe.uses_reframe(rsegs):
+        # reframe editor: per-segment layouts and panned crops in one composite panel; contiguous frame-exact
+        # pieces with the continuous source audio (no fades), each word captioned once
+        rctx = {"width": meta["width"], "height": meta["height"], "ratio": opts["ratio"]}
+        rsegs = reframe.validate_segments(rsegs, rctx, start, end)
+        panels = render_reframe_panel(src, work_dir / "panels", meta, rsegs, ws, we, opts["ratio"], anchor)
+        pieces = reframe.frame_pieces(rsegs, ws)
+        piece_words = reframe.assign_words(norm["words"], pieces)
+    else:
+        rsegs = None
+        panels = render_layout_panels(src, meta, opts, cam_box, game_box, ws, we - ws, work_dir / "panels")
+        panels = with_caption_anchor(panels, anchor, opts["ratio"])
+        pieces = [(start, end)]
+        if norm["trim_silence"] and meta["has_audio"]:
+            env = audio_envelope(src, work_dir / "analysis")
+            islands = islands_from_env(env, -48.0, 0.20)
+            trimmed = trim_pauses({"start": start, "end": end}, islands, 0.55)
+            pieces = [(s["src_s"], s["src_e"]) for s in snap_segments(trimmed, norm["words"], ws, we)]
+        piece_words = [[w for w in norm["words"] if w["e"] > a and w["s"] < b] for a, b in pieces]
     segs = [
         {
             "cut_start": a,
@@ -250,9 +267,9 @@ def build_high_level_clip(spec: dict, base_dir: Path, args) -> dict:
             "dur": b - a,
             "peak_db": 0.0,
             "shock_contrast": 0.0,
-            "words": [w for w in norm["words"] if w["e"] > a and w["s"] < b],
+            "words": pw,
         }
-        for a, b in pieces
+        for (a, b), pw in zip(pieces, piece_words, strict=True)
     ]
     volume = loudness_gain(measure_loudness(Path(panels["main_src"])))
     style = {
@@ -274,7 +291,7 @@ def build_high_level_clip(spec: dict, base_dir: Path, args) -> dict:
         assets,
         hook_text=hook,
         volume=volume,
-        fade_ms=12 if len(segs) > 1 else 0,
+        fade_ms=12 if len(segs) > 1 and not rsegs else 0,
         draft_root=draft_root,
         overwrite=overwrite,
         close_capcut=args.close_capcut,
@@ -309,6 +326,8 @@ def build_high_level_clip(spec: dict, base_dir: Path, args) -> dict:
         spec_out,
         win_offset=ws,
     )
+    if rsegs:
+        plan["reframe_segments"] = rsegs  # source time; the panel above already holds them
     plan_out = work_dir / f"{name}.clip.json"
     plan_out.write_text(json.dumps(plan, indent=2, ensure_ascii=False), encoding="utf-8")
     if getattr(args, "render", False):

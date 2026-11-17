@@ -241,6 +241,8 @@ class DashboardServer(ThreadingHTTPServer):
         self.public_host = lan_ip() if lan else "127.0.0.1"
         self.doctor = {"running": False, "rows": None, "ended": None}
         self.doctor_lock = threading.Lock()
+        self.reframe_lock = threading.Lock()
+        self.reframes = {}  # (job, clip key) -> Auto-reframe state of the editor
         self.card_cache = {}  # job id -> (signature, {thumb_url, clip_count}) for the Projects grid
         super().__init__(addr, Handler)
         from streamclipper import env as _env
@@ -521,11 +523,22 @@ class Handler(BaseHTTPRequestHandler):
             job = srv.store.get(check_job_id(api[1]))
             clips = library.list_clips(srv.store, api[1], statuses)
             return self._send_json(200, {"job": self._public_job(job), "clips": clips, "lan": srv.lan})
-        if len(api) == 5 and api[0] == "jobs" and api[2] == "clips" and api[4] in ("edit", "source"):
+        if (
+            len(api) == 5
+            and api[0] == "jobs"
+            and api[2] == "clips"
+            and api[4] in ("edit", "source", "thumbs", "reframe")
+        ):
             job_id, key = check_job_id(api[1]), library.check_key(api[3])
             srv.store.get(job_id)
             if api[4] == "edit":
                 return self._send_json(200, editor.context(srv.store, job_id, key, srv.lan))
+            if api[4] == "thumbs":
+                return self._send_file(editor.thumbs(srv.store, job_id, key, srv.lan), "image/jpeg")
+            if api[4] == "reframe":
+                with srv.reframe_lock:
+                    st = srv.reframes.get((job_id, key))
+                    return self._send_json(200, dict(st) if st else {"running": False, "segments": None})
             plan = editor._load_plan(srv.store.job_dir(job_id) / "out", key)
             try:
                 video = editor.source_info(plan, editor.lan_roots(srv.store) if srv.lan else None)["video"]
@@ -842,6 +855,8 @@ class Handler(BaseHTTPRequestHandler):
                 srv.lan,
             )
             return self._send_json(200, res)
+        if action == "reframe":
+            return self._send_json(202, self._start_reframe(job_id, key, body.get("edit")))
         if action == "delete":
             if job.get("status") in ("running", "queued") or srv.runner.running_id() == job_id:
                 raise ToolError("This job is still running.", "wait until it has finished, then delete clips")
@@ -914,6 +929,37 @@ class Handler(BaseHTTPRequestHandler):
         threading.Thread(target=run, daemon=True).start()
         with srv.doctor_lock:
             return dict(srv.doctor)
+
+    def _start_reframe(self, job_id: str, key: str, edit) -> dict:
+        """Auto-reframe of one clip's edit on a background thread (face tracking takes seconds); one run per clip."""
+        srv = self.server
+        k = (job_id, key)
+        with srv.reframe_lock:
+            cur = srv.reframes.get(k)
+            if cur and cur["running"]:
+                return dict(cur)
+        ctx = editor.context(srv.store, job_id, key, srv.lan)
+        form = editor.validate(ctx, edit)
+        _jdir, out, edir = editor._dirs(srv.store, job_id, key)
+        video = editor.source_info(editor._load_plan(out, key), editor.lan_roots(srv.store) if srv.lan else None)
+        state = {"running": True, "error": "", "hint": "", "segments": None, "faces": [], "note": ""}
+        with srv.reframe_lock:
+            srv.reframes[k] = state
+
+        def run():
+            try:
+                res = editor.auto_reframe(ctx, form, video["video"], edir)
+                upd = {"segments": res["segments"], "faces": res["faces"], "note": res["note"]}
+            except ToolError as e:
+                upd = {"error": _scrub(str(e)), "hint": _scrub(e.hint or "")}
+            except Exception as e:  # never kill the dashboard; the page shows the message
+                upd = {"error": _scrub(f"Auto-reframe failed: {type(e).__name__}: {e}")[:300], "hint": ""}
+            with srv.reframe_lock:
+                state.update(upd, running=False)
+
+        threading.Thread(target=run, daemon=True).start()
+        with srv.reframe_lock:
+            return dict(state)
 
     def _share_keys(self, share: dict) -> list:
         clips = library.list_clips(self.server.store, share["job"])

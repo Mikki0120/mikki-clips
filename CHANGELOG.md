@@ -1,10 +1,22 @@
 # Changelog
-## Unreleased
+## 5.2.0 (2026-11-18)
+### Added
+- Premium dashboard: left sidebar (bottom bar on phones), Home with one-click **Get clips** and an Advanced drawer, a first-run set-up check (doctor in the background), Projects grid with thumbnails, source icons, progress rings and clip counts, vertical clip cards with hover preview and score breakdown, a Styles page with Set as default, skeleton loaders, toasts, confirm dialogs, keyboard shortcuts (`/`, `?`) and Lucide icons (ISC).
+- Reframe editor: Split at playhead into segments with their own layout (full, split, square frame, caption punch, speaker) and crop windows, pan keyframes with smooth or linear easing, cut/smooth joins, a live canvas preview drawn with the render maths, a timeline with thumbnails, waveform, segment blocks, keyframe diamonds and word chips, undo/redo (Ctrl+Z / Ctrl+Shift+Z), caption drag with safe-zone snapping and a face warning, style tiles, and editor shortcuts (Space, J/K/L, S, [, ], Delete).
+- Auto-reframe (face tracking in the background, keyframes about once a second) and Reset to auto-detected.
+- Versions with Compare: the original and an edited MP4 side by side, played and seeked together, with both audit tables.
+- Timeline thumbnail sprite (`GET .../clips/<key>/thumbs`, one ffmpeg call, cached).
+- Segmented edits render as one ffmpeg graph (frame-exact trim per segment + concat, continuous source audio) through the normal export gate; CapCut drafts get one video segment per editor segment (`reframe_segments` and `caption_anchor` in the clip spec).
 ### Changed
-- default --prefix is now clip (was GTA6_Viral): `clip-stream` without `--prefix` writes `clip_01.mp4`, the same names as `render` and the dashboard.
+- Dashboard routes: `#/home`, `#/projects`, `#/project/<id>`, `#/edit/<job>/<key>`, `#/live`, `#/styles`, `#/settings`; the old `#/new`, `#/jobs` and `#/job/<id>` links redirect.
+- Default `--prefix` is now `clip` (was GTA6_Viral): `clip-stream` without `--prefix` writes `clip_01.mp4`, the same names as `render` and the dashboard (B07).
 ### Fixed
-- Dashboard: in `--lan` mode the editor serves only videos inside the workspace; bad share `days` no longer gives a 500; Settings and Options no longer wait on the CapCut/Ollama checks; a slow page can no longer replace the page you moved to; the editor caches its source probe.
-
+- B01: in `--lan` mode the editor serves only videos inside the workspace.
+- B02: a bad share `days` value no longer gives a 500 (it is parsed once; default 7 days).
+- B03: the README screenshot shows the dashboard UI (Projects page) instead of only video frames.
+- B04: Settings and Options no longer wait on the CapCut/Ollama checks (background, cached).
+- B05: a slow page can no longer replace the page you moved to.
+- B06: the editor caches its source probe, so reopening a clip runs no ffprobe.
 ## 5.1.0 (2026-11-17)
 
 ### Added
