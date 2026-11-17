@@ -386,10 +386,17 @@ def print_gate_table(title: str, rows: list) -> bool:
     return not fails
 
 
-def render_and_gate(plan: dict, out_mp4: Path) -> bool:
-    """Render, run the export gate and, when it passes, write <name>_thumb.jpg."""
+def render_and_gate(plan: dict, out_mp4: Path, black_background: bool = False) -> bool:
+    """
+    Render, run the export gate and, when it passes, write <name>_thumb.jpg. black_background: the source is
+    black on purpose (the style gallery's sample), so blackdetect is N/A instead of FAIL.
+    """
     mp4 = render_plan_mp4(plan, out_mp4)
     rows = gate_mp4(mp4)
+    if black_background:
+        rows = [
+            (c, "N/A", "black sample background on purpose") if c == "blackdetect" else (c, s, d) for c, s, d in rows
+        ]
     ok = print_gate_table(f"EXPORT GATE: {mp4.name}", rows)
     # <name>.gate.json: the same table for the dashboard's audit view
     write_json_atomic(mp4.with_name(f"{mp4.stem}.gate.json"), {"pass": ok, "rows": [list(r) for r in rows]})

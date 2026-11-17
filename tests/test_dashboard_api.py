@@ -50,7 +50,7 @@ def test_index_static_and_headers(dash):
     js = (server.STATIC_DIR / "app.js").read_text(encoding="utf-8")
     assert "innerHTML" not in js and "sc_theme" in (server.STATIC_DIR / "theme.js").read_text(encoding="utf-8")
     css = (server.STATIC_DIR / "app.css").read_text(encoding="utf-8")
-    assert '[data-theme="dark"]' in css and "#0d1117" in css and "#8b5cf6" in css.lower()
+    assert '[data-theme="dark"]' in css and "#0a0a0a" in css and "#8b5cf6" in css.lower()
 
 
 def test_vod_job_runs_queue_cancel_resume_files_mark_rerender(dash, tmp_path):

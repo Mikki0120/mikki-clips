@@ -258,6 +258,7 @@ function picker(kind, value, onPick) {
       dataset: { name },
     });
     if (t) btn.append(sprite(t));
+    else btn.append(h("div", { class: "auto-art", "aria-hidden": "true" }, h("strong", { text: "AUTO" }), h("span", { text: "picks per clip" })));
     btn.append(h("span", { class: "name", text: name === "auto" ? "auto (per clip)" : name }));
     btn.addEventListener("click", () => {
       tiles.forEach((x) => {
@@ -369,15 +370,30 @@ function jobForm(live) {
   const ratioSel = sel(OPTS.ratios, st.ratio, { onchange: (e) => (st.ratio = e.target.value) });
   const err = h("p", { class: "err", role: "alert" });
   const submit = h("button", { class: "btn primary", type: "submit", id: live ? "live-start" : "job-start", text: live ? "Start live clipping" : "Start job" });
+  const summary = h("span", { class: "summary", "aria-live": "polite" });
+  const MODES = { vod: "Recorded stream", podcast: "Podcast", live: "Live stream" };
+  const showSummary = () => {
+    const parts = [
+      ["Mode", MODES[st.mode] || st.mode],
+      st.mode === "vod" ? ["Preset", st.preset || "auto"] : null,
+      ["Captions", st.caption_style],
+      ["Hook", st.hook_style],
+    ].filter(Boolean);
+    summary.replaceChildren(...parts.flatMap(([k, v], i) => [i ? " · " : "", k + " ", h("strong", { text: v })]));
+  };
+  const head = (title, desc) => h("div", { class: "sec-head" }, h("h2", { text: title }), h("p", { text: desc }));
+  presetSel.addEventListener("change", showSummary);
+  modeBox.addEventListener("change", showSummary);
+  showSummary();
 
   const form = h(
     "form",
     { class: "stack" },
-    h("div", { class: "card stack" }, h("h2", { text: "Source" }), tabs, paneBox, live ? null : h("div", { class: "stack" }, h("span", { class: "label", text: "Mode" }), modeBox)),
+    h("div", { class: "card stack" }, head("Source", "A link, an uploaded file or a video on this PC."), tabs, paneBox, live ? null : h("div", { class: "stack" }, h("span", { class: "label", text: "Mode" }), modeBox)),
     h(
       "div",
       { class: "card stack" },
-      h("h2", { text: "Clips" }),
+      head("Clips", "Layout, length and how picky the scoring is."),
       h(
         "div",
         { class: "grid3" },
@@ -390,9 +406,9 @@ function jobForm(live) {
       ),
       h("div", { class: "row" }, toggle("render", "Render ready-to-post MP4s"), toggle("drafts", "CapCut drafts"))
     ),
-    h("div", { class: "card stack" }, h("h2", { text: "Caption style" }), picker("caption", st.caption_style, (n) => (st.caption_style = n))),
-    h("div", { class: "card stack" }, h("h2", { text: "Hook style" }), picker("hook", st.hook_style, (n) => (st.hook_style = n))),
-    h("div", { class: "row" }, submit, err)
+    h("div", { class: "card stack" }, head("Caption style", "How the spoken words show on the clip."), picker("caption", st.caption_style, (n) => ((st.caption_style = n), showSummary()))),
+    h("div", { class: "card stack" }, head("Hook style", "The headline banner in the first seconds."), picker("hook", st.hook_style, (n) => ((st.hook_style = n), showSummary()))),
+    h("div", { class: "action-bar" }, summary, submit, err)
   );
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();

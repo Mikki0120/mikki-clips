@@ -57,36 +57,12 @@ def sample_words(dur: float, text: str = SAMPLE_TEXT) -> list:
     ]
 
 
-def background_frame(w: int = 1920, h: int = 1080, seed: int = 7) -> np.ndarray:
-    """A dark synthetic 'gameplay-like' still (teal/purple gradient, soft light blobs, faint floor grid, grain)."""
-    rng = np.random.default_rng(seed)
+def background_frame(w: int = 1920, h: int = 1080) -> np.ndarray:
+    """A flat near-black still (#0a0a0a) with a faint vignette to black at the edges: every text colour reads."""
     y, x = np.mgrid[0:h, 0:w].astype(np.float32)
-    u, v = x / w, y / h
-    top, bottom = np.array([16, 62, 80], np.float32), np.array([50, 26, 92], np.float32)
-    img = top * (1 - v[..., None]) + bottom * v[..., None]
-    img *= (0.85 + 0.3 * u)[..., None]
-    blobs = [  # (x, y, radius, colour); most in the centre third, which the 9:16 crop keeps
-        (0.42, 0.62, 0.10, (170, 60, 160)),
-        (0.58, 0.78, 0.12, (30, 160, 160)),  # teal behind the caption band (canvas y ~ 0.76)
-        (0.50, 0.40, 0.09, (60, 90, 200)),
-        (0.36, 0.90, 0.08, (200, 110, 40)),
-        (0.63, 0.50, 0.07, (40, 190, 140)),
-        (0.47, 0.15, 0.10, (130, 70, 200)),
-        (0.15, 0.30, 0.20, (30, 120, 160)),
-        (0.85, 0.70, 0.20, (140, 50, 140)),
-    ]
-    for bx, by, r, col in blobs:
-        d2 = ((u - bx) * w / h) ** 2 + (v - by) ** 2
-        img += 0.45 * np.exp(-d2 / (2 * r * r))[..., None] * np.array(col, np.float32)
-    floor = v > 0.55  # perspective floor grid towards a vanishing point at the horizon
-    depth = np.where(floor, 0.08 / np.maximum(v - 0.5, 1e-3), 0)
-    rows = np.abs(np.sin(np.pi * depth * 4))
-    cols = np.abs(np.sin(np.pi * (u - 0.5) * depth * 14))
-    grid = np.exp(-(rows**2) / 0.004) + np.exp(-(cols**2) / 0.004)
-    img += (np.clip(grid, 0, 1) * floor * (v - 0.55) * 1.6)[..., None] * np.array([40, 150, 170], np.float32)
-    img *= (1 - 0.35 * (((u - 0.5) * 1.6) ** 2 + ((v - 0.5) * 1.4) ** 2))[..., None]  # vignette
-    img += rng.normal(0, 2.0, (h, w, 1)).astype(np.float32)
-    return np.clip(img, 0, 255).astype(np.uint8)
+    u, v = x / w - 0.5, y / h - 0.5
+    img = 10.0 * np.clip(1 - 1.2 * (u * u + v * v), 0, 1)
+    return np.repeat(np.round(img)[..., None], 3, axis=2).astype(np.uint8)
 
 
 def sample_video(out_dir: Path, dur: float = SAMPLE_DUR + 0.5) -> Path:
@@ -265,7 +241,7 @@ def make_gallery(input_video: str = "", out_dir: str = "style_previews") -> Path
             capcut.find_triggers = find_triggers
         plan = json.loads((out / f"{name}.clip.json").read_text(encoding="utf-8"))
         mp4 = out / f"{name}.mp4"
-        results.append((name, render_and_gate(plan, mp4)))
+        results.append((name, render_and_gate(plan, mp4, black_background=not input_video)))
         side = json.loads(mp4.with_name(f"{mp4.stem}.timeline.json").read_text(encoding="utf-8"))
         t = capture_time(plan, cap, pick) if words else HOOK_T
         run_cmd(
@@ -282,7 +258,7 @@ def make_gallery(input_video: str = "", out_dir: str = "style_previews") -> Path
     run_cmd(
         ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-framerate", "1", "-i", str(tdir / "%02d.png")]
         + ["-vf", f"tile={GRID_COLS}x{rows}:padding={GAP}:margin={GAP}:color={PAGE_BG}", "-frames:v", "1"]
-        + ["-q:v", "2", str(grid)],  # JPEG: a fifth of the PNG size for the gradient backgrounds
+        + ["-q:v", "2", str(grid)],  # JPEG: smaller than PNG for the text edges
         "styles gallery grid",
     )
     print(f"Style gallery -> {fwd(grid)} ({len(tiles)} samples; MP4 + PNG per style in {fwd(out)})")
