@@ -47,6 +47,21 @@ def test_run_cell_calls_run_pipeline():
     assert "#@param" in src
 
 
+def test_drive_is_optional_and_drive_links_are_opt_in():
+    cells = [c.source for c in _nb().cells]
+    src = "\n".join(cells)
+    assert 'use_google_drive = True  #@param {type:"boolean"}' in src
+    assert 'share_on_drive = False  #@param {type:"boolean"}' in src
+    assert "Drive access stays inside your own Google account. StreamClipper has no server." in cells[0]
+    assert "Anyone with the link can see the clip." in src
+    assert "if result and share_on_drive:\n        share_run(result)" in src
+    out = next(c for c in cells if c.startswith("#@title 9."))
+    assert (
+        "zip_outputs(" in out and "if is_colab():" in out and out.index("if is_colab():") < out.index("files.download(")
+    )
+    assert "progress is not saved" in src
+
+
 def test_caption_style_defaults_to_auto_with_the_gallery():
     src = "\n".join(c.source for c in _nb().cells if c.cell_type == "code")
     assert src.count('caption_style = "auto"  #@param ["auto", ') == 2

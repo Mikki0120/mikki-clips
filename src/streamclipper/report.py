@@ -1,4 +1,7 @@
-"""clips.csv and a static index.html next to clips.json (single file, no scripts, no external URLs)."""
+"""
+clips.csv and a static index.html next to clips.json (single file, no scripts, no external URLs except the
+opt-in Drive links of Colab's share_on_drive).
+"""
 
 import csv
 import html
@@ -24,6 +27,7 @@ CSV_COLUMNS = (
     "reason",
     "mp4",
     "thumb",
+    "drive_link",
 )
 
 _CSS = """
@@ -128,6 +132,8 @@ def _card(c: dict, source: str = "", clips_name: str = "clips.json") -> str:
         links.append(f'<a href="{_link(c["mp4"])}">MP4</a>')
     if c.get("thumb"):
         links.append(f'<a href="{_link(c["thumb"])}">Thumbnail</a>')
+    if str(c.get("drive_link") or "").startswith("https://"):
+        links.append(f'<a href="{e(c["drive_link"])}">Drive link</a>')
     tags = " ".join(c.get("hashtags") or [])
     score = max(0, min(100, int(c.get("score") or 0)))
     return (

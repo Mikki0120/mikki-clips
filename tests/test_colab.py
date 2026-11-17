@@ -60,6 +60,35 @@ def test_missing_local_source_is_a_clear_error(tmp_path):
         colab.run_pipeline(str(tmp_path / "nope.mp4"), out_dir=str(tmp_path / "o"))
 
 
+def test_zip_outputs_has_only_the_results(tmp_path):
+    out = tmp_path / "StreamClipper"
+    (out / "windows").mkdir(parents=True)
+    for name in ("clip_01.mp4", "clip_01_thumb.jpg", "clips.csv", "clips.json", "index.html", "capcut_drafts.zip"):
+        (out / name).write_bytes(b"x")
+    (out / "windows" / "w.mp4").write_bytes(b"big")
+    (out / "clip_02.part.mp4").write_bytes(b"half")
+    (out / "state.txt").write_bytes(b"s")
+    zp = colab.zip_outputs(out, tmp_path / "streamclipper_outputs.zip")
+    with zipfile.ZipFile(zp) as zf:
+        assert sorted(zf.namelist()) == sorted(
+            ["clip_01.mp4", "clip_01_thumb.jpg", "clips.csv", "clips.json", "index.html", "capcut_drafts.zip"]
+        )
+        assert zf.getinfo("clip_01.mp4").compress_type == zipfile.ZIP_STORED
+
+
+def test_results_html_cards(tmp_path):
+    (tmp_path / "clip_01.mp4").write_bytes(b"mp4")
+    clips = [
+        {"rank": 1, "score": 77, "category": "funny", "title": "<b>x</b>", "description": "d", "hashtags": ["#a"],
+         "mp4": "clip_01.mp4", "drive_link": "https://drive.google.com/file/d/ID/view"},
+        {"rank": 2, "score": 60, "title": "two"},
+    ]  # fmt: skip
+    page = colab.results_html({"out_dir": tmp_path, "clips": clips}, previews=1)
+    assert page.count("<video") == 1 and "&lt;b&gt;x&lt;/b&gt;" in page and "<b>x</b>" not in page
+    assert page.count(">Copy</button>") == 4 and "navigator.clipboard.writeText" in page
+    assert "https://drive.google.com/file/d/ID/view" in page and "score 77" in page
+
+
 def test_drive_out_dir_env_override(tmp_path, monkeypatch):
     monkeypatch.setenv("STREAMCLIPPER_OUT", str(tmp_path))
     assert colab.drive_out_dir("StreamClipper/live/x") == tmp_path / "StreamClipper" / "live" / "x"

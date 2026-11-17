@@ -1,6 +1,7 @@
 """
 Google Colab helpers. The notebook only sets form values and calls run_pipeline(), so the whole Colab run
-can be tested on a normal PC. No web UI, no servers, no share links: outputs go to a folder (Drive on Colab).
+can be tested on a normal PC. No web UI or servers: outputs go to a folder (Drive on Colab, or /content
+without Drive, then downloaded as a zip). Drive share links only when the user ticks share_on_drive.
 """
 
 import base64
@@ -264,48 +265,85 @@ def collect_outputs(out: Path, summary: dict, draft_root) -> dict:
     return result
 
 
+ZIP_SUFFIXES = (".mp4", ".jpg", ".csv", ".html", ".json", ".zip")
+
+
+def zip_outputs(out_dir, zip_path) -> Path:
+    """The top-level results of a run (MP4s, thumbnails, clips.csv/json, index.html, drafts zip) in one zip."""
+    out_dir, zip_path = Path(out_dir), Path(zip_path)
+    tmp = zip_path.with_name(zip_path.name + ".tmp")
+    with zipfile.ZipFile(tmp, "w") as zf:
+        for p in sorted(out_dir.iterdir()):
+            if not p.is_file() or p.suffix.lower() not in ZIP_SUFFIXES or p.resolve() == zip_path.resolve():
+                continue
+            if p.name.endswith((".part.mp4", ".tmp")):
+                continue
+            stored = p.suffix.lower() in (".mp4", ".zip", ".jpg")  # already compressed
+            zf.write(p, p.name, compress_type=zipfile.ZIP_STORED if stored else zipfile.ZIP_DEFLATED)
+    os.replace(tmp, zip_path)
+    return zip_path
+
+
+_COPY_JS = (
+    "navigator.clipboard.writeText(this.parentElement.querySelector('.sc-t').innerText)"
+    ".then(()=>{this.innerText='Copied'});return false;"
+)
+
+
+def _copy_line(label: str, text: str) -> str:
+    if not text:
+        return ""
+    return (
+        f"<div style='margin:4px 0'><b>{label}:</b> <span class='sc-t'>{html.escape(text)}</span> "
+        f"<button onclick=\"{_COPY_JS}\" style='font-size:11px;padding:1px 8px;cursor:pointer'>Copy</button></div>"
+    )
+
+
 def results_html(result: dict, previews: int = 3, max_preview_mb: float = 15.0) -> str:
     """
-    A results table plus inline <video> previews of the first `previews` MP4s (base64, only files up to
-    max_preview_mb, so the notebook stays small). For IPython.display.HTML; no external URLs.
+    Result cards for IPython.display.HTML: thumbnail, an inline <video> for the first `previews` MP4s (base64,
+    only files up to max_preview_mb so the notebook stays small), score, category, title/description/hashtags
+    with Copy buttons and the Drive link when share_on_drive made one.
     """
-    rows = []
-    mp4_by_rank = {}
-    for c in result.get("clips") or []:
-        if c.get("mp4"):
-            mp4_by_rank[c.get("rank")] = Path(result["out_dir"]) / c["mp4"]
-        rows.append(
-            "<tr>"
-            + "".join(
-                f"<td>{html.escape(str(v))}</td>"
-                for v in (
-                    c.get("rank"),
-                    f"{float(c.get('start', 0)):.1f}-{float(c.get('end', 0)):.1f}s",
-                    c.get("score"),
-                    c.get("category") or "",
-                    c.get("hook_headline") or "",
-                    c.get("title") or "",
-                    c.get("mp4") or "",
-                )
-            )
-            + "</tr>"
+    out = Path(result["out_dir"])
+    cards, shown = [], 0
+    for c in sorted(result.get("clips") or [], key=lambda c: c.get("rank", 0)):
+        mp4 = out / c["mp4"] if c.get("mp4") else None
+        media = ""
+        if (
+            mp4 is not None
+            and shown < previews
+            and mp4.is_file()
+            and mp4.stat().st_size <= max_preview_mb * 1024 * 1024
+        ):
+            b64 = base64.b64encode(mp4.read_bytes()).decode("ascii")
+            media = f"<video width='220' controls src='data:video/mp4;base64,{b64}'></video>"
+            shown += 1
+        elif c.get("thumb") and (out / c["thumb"]).is_file():
+            b64 = base64.b64encode((out / c["thumb"]).read_bytes()).decode("ascii")
+            media = f"<img width='220' src='data:image/jpeg;base64,{b64}' alt='thumbnail'>"
+        score = max(0, min(100, int(float(c.get("score") or 0))))
+        drive = str(c.get("drive_link") or "")
+        link = (
+            f"<div><a href='{html.escape(drive)}' target='_blank'>Drive link</a> "
+            "(anyone with the link can see it)</div>"
+            if drive.startswith("https://")
+            else ""
         )
-    head = "".join(f"<th>{h}</th>" for h in ("#", "Time", "Score", "Category", "Hook", "Title", "MP4"))
-    parts = [
-        "<table style='border-collapse:collapse;font-size:13px' border='1' cellpadding='4'>"
-        f"<tr>{head}</tr>{''.join(rows)}</table>"
-    ]
-    shown = 0
-    for mp4 in result.get("mp4s") or list(mp4_by_rank.values()):
-        if shown >= previews:
-            break
-        mp4 = Path(mp4)
-        if not mp4.is_file() or mp4.stat().st_size > max_preview_mb * 1024 * 1024:
-            continue
-        b64 = base64.b64encode(mp4.read_bytes()).decode("ascii")
-        parts.append(
-            f"<div style='display:inline-block;margin:8px;text-align:center'><div>{html.escape(mp4.name)}</div>"
-            f"<video width='240' controls src='data:video/mp4;base64,{b64}'></video></div>"
+        cards.append(
+            "<div style='display:inline-block;vertical-align:top;width:240px;margin:8px;padding:10px;"
+            "border:1px solid #ccc;border-radius:10px;font-size:13px'>"
+            f"{media}<div style='font-weight:bold;margin-top:6px'>#{html.escape(str(c.get('rank')))} &middot; "
+            f"score {score} &middot; {html.escape(str(c.get('category') or ''))}</div>"
+            f"<div style='height:6px;background:#eee;border-radius:3px'><div style='width:{score}%;height:6px;"
+            "background:#8B5CF6;border-radius:3px'></div></div>"
+            + _copy_line("Title", str(c.get("title") or c.get("hook_headline") or ""))
+            + _copy_line("Description", str(c.get("description") or ""))
+            + _copy_line("Hashtags", " ".join(c.get("hashtags") or []))
+            + (f"<div style='color:#666'>{html.escape(str(c['mp4']))}</div>" if c.get("mp4") else "")
+            + link
+            + "</div>"
         )
-        shown += 1
-    return "\n".join(parts)
+    if not cards:
+        return "<p>No clip passed the quality bar. Try a lower min_score.</p>"
+    return "<div>" + "".join(cards) + "</div>"

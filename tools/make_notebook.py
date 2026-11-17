@@ -3,8 +3,8 @@ Build notebooks/StreamClipper_Colab.ipynb with nbformat, so the notebook is alwa
 
     python tools/make_notebook.py
 
-Colab free-tier rules: only #@param forms and inline HTML output. No Gradio, Streamlit, tunnels, share links
-or web servers.
+Colab free-tier rules: only #@param forms and inline HTML output. No Gradio, Streamlit, tunnels or web servers;
+Drive share links only when the user ticks share_on_drive.
 """
 
 import json
@@ -27,7 +27,10 @@ thumbnails, a `clips.csv`/`index.html` report and editable CapCut Desktop drafts
 1. **Runtime > Change runtime type > T4 GPU** (free tier works; CPU also works, slower).
 2. Run the cells from top to bottom. Fill in the form fields of cells 2, 5 and 6.
 3. Everything is saved to your Google Drive in `MyDrive/StreamClipper/`. If Colab disconnects, run the cells
-   again with the same inputs: the run resumes where it stopped.
+   again with the same inputs: the run resumes where it stopped. Untick `use_google_drive` in cell 4 to skip
+   Drive: the files are then downloaded as a zip at the end (progress is not saved).
+
+Drive access stays inside your own Google account. StreamClipper has no server.
 
 Clip only streams you have permission to clip (the streamer's permission or an official clipping program).
 """
@@ -119,14 +122,24 @@ else:
 """
 
 CELL_DRIVE = """#@title 4. Connect Google Drive (outputs and progress are saved there)
+#@markdown Drive access stays inside your own Google account. StreamClipper has no server.
+#@markdown Untick to work without Drive: outputs stay in /content and are downloaded as a zip at the end.
+use_google_drive = True  #@param {type:"boolean"}
 import os
 
-if os.environ.get("STREAMCLIPPER_NO_DRIVE"):
-    print("Drive skipped (STREAMCLIPPER_NO_DRIVE): outputs go to", os.environ.get("STREAMCLIPPER_OUT", "/content"))
+if not use_google_drive or os.environ.get("STREAMCLIPPER_NO_DRIVE"):
+    use_google_drive = False
+    os.environ.setdefault("STREAMCLIPPER_OUT", "/content")
+    print("Drive skipped: outputs go to", os.environ["STREAMCLIPPER_OUT"])
+    print(
+        "Without Google Drive your progress is not saved: if Colab disconnects, the run starts over. "
+        "Your files are downloaded as a zip at the end."
+    )
 else:
     from google.colab import drive
 
     drive.mount("/content/drive")
+    print("Drive access stays inside your own Google account. StreamClipper has no server.")
 """
 
 CELL_INPUTS = """#@title 5. Your stream
@@ -156,6 +169,9 @@ max_clips = 10  #@param {type:"integer"}
 ratio = "9:16"  #@param ["9:16", "1:1"]
 llm = "auto"  #@param ["auto", "ollama", "none"]
 make_drafts = True  #@param {type:"boolean"}
+#@markdown **Share on Drive** makes "anyone with the link can view" Drive links for the finished MP4s,
+#@markdown index.html and clips.csv. Anyone with the link can see the clip. Default off.
+share_on_drive = False  #@param {type:"boolean"}
 
 LLM = ("ollama" if globals().get("LLM_READY", False) else "none") if llm == "auto" else llm
 print("LLM:", LLM)
@@ -163,6 +179,7 @@ print("LLM:", LLM)
 
 CELL_RUN = """#@title 7. Find and make the clips (resumes after a disconnect)
 from streamclipper.colab import drive_out_dir, run_pipeline
+from streamclipper.drive_share import share_run
 from streamclipper.util import ToolError
 
 OUT_DIR = drive_out_dir(output_folder)
@@ -183,6 +200,8 @@ try:
         cookies=cookies_path,
         resume=True,
     )
+    if result and share_on_drive:
+        share_run(result)
 except ToolError as e:
     result = None
     print("ERROR:", e)
@@ -201,8 +220,10 @@ else:
     print("No results yet: see the error in cell 7.")
 """
 
-CELL_OUTPUTS = """#@title 9. Your files on Drive
+CELL_OUTPUTS = """#@title 9. Your files (on Drive, or downloaded as a zip without Drive)
 from pathlib import Path
+
+from streamclipper.colab import is_colab, zip_outputs
 
 if result:
     for p in sorted(Path(result["out_dir"]).glob("*")):
@@ -213,6 +234,13 @@ if result:
     if result["drafts_zip"]:
         print("CapCut drafts: download capcut_drafts.zip to your Windows PC, close CapCut, then run:")
         print("    streamclipper import-draft --zip capcut_drafts.zip")
+    if not globals().get("use_google_drive", True):
+        zp = zip_outputs(result["out_dir"], Path(result["out_dir"]).parent / "streamclipper_outputs.zip")
+        print("Zip of your files:", zp)
+        if is_colab():
+            from google.colab import files
+
+            files.download(str(zp))
 """
 
 CELL_LIVE = """#@title 10. Live clipping (optional): clip a stream while it is still live
