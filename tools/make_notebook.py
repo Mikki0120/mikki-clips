@@ -145,7 +145,7 @@ source = os.environ.get("STREAMCLIPPER_TEST_INPUT") or source  # tests only: a l
 
 CELL_OPTIONS = """#@title 6. Options
 #@markdown Caption styles (`auto` picks one per clip from its category):
-#@markdown ![caption styles](https://raw.githubusercontent.com/alokbaraii/streamclipper/main/docs/media/styles_gallery.png)
+#@markdown ![caption styles](https://raw.githubusercontent.com/alokbaraii/streamclipper/main/docs/media/styles_gallery.jpg)
 preset = "streamer-split-9x16"  #@param {PRESETS}
 caption_style = "auto"  #@param {STYLES}
 hook_style = "bold-box"  #@param {HOOKS}

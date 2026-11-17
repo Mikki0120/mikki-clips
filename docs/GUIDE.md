@@ -102,7 +102,7 @@ streamclipper download-vod --url https://youtu.be/VX8hvc4WMN4 --start 60 --end 7
 streamclipper build-clipper --spec clip_spec.json --render
 ```
 
-- `styles` lists the caption styles, hook styles and caption fonts. `styles --preview` renders a 4 s sample MP4 and PNG of each one into `style_previews\` plus `styles_gallery.png` (about 2 minutes).
+- `styles` lists the caption styles, hook styles and caption fonts. `styles --preview` renders a 4 s sample MP4 and PNG of each one into `style_previews\` plus `styles_gallery.jpg` (about 2 minutes).
 - `discover-clips --url` downloads the audio only; on YouTube it also uses the Most Replayed graph and the live chat replay when the video has one.
 - `--preset hook-grabber-9x16` puts the clip on top and a muted `filler.mp4` (footage you have the rights to) below it.
 - `download-vod` downloads 60-70 s of a video as H.264/AAC MP4 (at most 1080p).
@@ -255,7 +255,7 @@ The webcam is fitted over a blurred copy of itself, so a face is never stretched
 
 Captions follow the spoken words (they need a transcript). Each style exists in the MP4 and in the CapCut draft.
 
-![All caption and hook styles](media/styles_gallery.png)
+![All caption and hook styles](media/styles_gallery.jpg)
 
 *Made by `streamclipper styles --preview` on a synthetic background: each tile is the caption area of its sample, taken once the effect shows. The last row shows the hook banners. Hype words (red in real clips) are shown in each style's own colours.*
 

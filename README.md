@@ -68,6 +68,8 @@ Leave it running. Each good moment becomes a clip in `live_clips\`. Press Ctrl+C
 | A podcast instead of gameplay | `--preset podcast-9x16` |
 | Set the webcam box yourself | `--cam-crop x,y,w,h` |
 
+![Caption styles](docs/media/styles_gallery.jpg)
+
 ## Open a clip in CapCut
 
 Close CapCut, run `clip-stream` without `--no-draft`, then open CapCut. Your clips are at the top of the project list. From Colab, download `capcut_drafts.zip` and run `streamclipper import-draft --zip capcut_drafts.zip`.

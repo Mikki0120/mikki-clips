@@ -314,7 +314,7 @@ def build_parser() -> argparse.ArgumentParser:
     sy.add_argument(
         "--preview",
         action="store_true",
-        help="Render a ~4 s sample MP4 + PNG of every caption style and hook style, and styles_gallery.png",
+        help="Render a ~4 s sample MP4 + PNG of every caption style and hook style, and styles_gallery.jpg",
     )
     sy.add_argument("--input", default="", help="Video for the samples (default: a synthetic background)")
     sy.add_argument("--out", default="style_previews", help="Folder for the samples [style_previews]")

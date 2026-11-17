@@ -708,7 +708,7 @@ def cmd_styles(args):
         + ", ".join(f"{cat} -> {name}" for cat, name in CATEGORY_STYLES.items())
         + f", podcasts (--content talk) -> {TALK_STYLE}, other -> {DEFAULT_STYLE}"
     )
-    print("  See every style: streamclipper styles --preview --out style_previews (writes styles_gallery.png)")
+    print("  See every style: streamclipper styles --preview --out style_previews (writes styles_gallery.jpg)")
     print(f"\nHOOK STYLES ({len(HOOK_STYLES)})  --hook-style NAME")
     for name, look in HOOK_STYLES.items():
         print(f"  {name:<19}{look}")

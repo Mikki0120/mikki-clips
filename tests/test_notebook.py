@@ -50,4 +50,4 @@ def test_run_cell_calls_run_pipeline():
 def test_caption_style_defaults_to_auto_with_the_gallery():
     src = "\n".join(c.source for c in _nb().cells if c.cell_type == "code")
     assert src.count('caption_style = "auto"  #@param ["auto", ') == 2
-    assert "docs/media/styles_gallery.png" in src
+    assert "docs/media/styles_gallery.jpg" in src
