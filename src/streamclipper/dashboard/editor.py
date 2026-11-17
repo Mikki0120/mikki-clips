@@ -179,10 +179,24 @@ def _history(edir: Path) -> list:
         return []
 
 
-def source_info(plan: dict) -> dict:
+def _inside(p: Path, roots) -> bool:
+    try:
+        rp = Path(p).resolve()
+    except (OSError, ValueError):
+        return False
+    return any(rp.is_relative_to(Path(r).resolve()) for r in roots)
+
+
+def lan_roots(store) -> tuple:
+    """The folders a --lan user may read videos from: the workspace's uploads and jobs."""
+    return (store.ws / "uploads", store.ws / "jobs")
+
+
+def source_info(plan: dict, roots=None) -> dict:
     """
     The video the editor shows and its time base. The original local stream when it still exists (so the cut
     can grow past the window), else the clip's window file. t_off converts plan window time -> file time.
+    roots (--lan mode): only videos inside these folders are used; else the window file, else an error.
     """
     sw = plan.get("source_window") or {}
     win = Path(str(sw.get("path") or ""))
@@ -191,22 +205,25 @@ def source_info(plan: dict) -> dict:
         not re.match(r"^https?://", str(plan.get("source") or ""), re.I)
         and src.is_file()
         and src.resolve() != win.resolve()
+        and (roots is None or _inside(src, roots))
     )
     if original:
         return {"video": src, "t_off": float(sw.get("start") or 0.0), "original": True}
     if not win.is_file():
         raise ToolError("The clip's source video is gone.", "the window file was moved or deleted; run the job again")
+    if roots is not None and not _inside(win, roots):
+        raise ToolError("The source video is outside the workspace.", "edit this clip on the PC that runs StreamClipper")
     return {"video": win, "t_off": float(sw.get("offset") or 0.0), "original": False}
 
 
-def context(store, job_id: str, key: str) -> dict:
+def context(store, job_id: str, key: str, lan: bool = False) -> dict:
     library.check_key(key)
     job = store.get(job_id)
     if key in set(job.get("deleted") or []):
         raise ToolError("Unknown clip.", "reload the page")
     _jdir, out, edir = _dirs(store, job_id, key)
     plan = _load_plan(out, key)
-    si = source_info(plan)
+    si = source_info(plan, lan_roots(store) if lan else None)
     sw = plan.get("source_window") or {}
     vw, vh = int(sw.get("width") or 1920), int(sw.get("height") or 1080)
     t_off = si["t_off"]
@@ -473,7 +490,9 @@ def _save_copy(store, job_id: str, key: str, form: dict) -> None:
         save_clips(out / "clips.json", doc)
 
 
-def apply(store, runner, job_id: str, key: str, action: str, edit: dict, draft_root: str = "") -> dict:
+def apply(
+    store, runner, job_id: str, key: str, action: str, edit: dict, draft_root: str = "", lan: bool = False
+) -> dict:
     """save | render | draft | undo. render/draft write vN.json and queue the normal CLI on it."""
     library.check_key(key)
     parent = store.get(job_id)
@@ -482,13 +501,13 @@ def apply(store, runner, job_id: str, key: str, action: str, edit: dict, draft_r
     _jdir, out, edir = _dirs(store, job_id, key)
     if action == "undo":
         (edir / "pending.json").unlink(missing_ok=True)
-        return {"current": context(store, job_id, key)["current"]}
+        return {"current": context(store, job_id, key, lan)["current"]}
     if action not in ("save", "render", "draft"):
         raise ToolError("Unknown editor action.", "use Save, Render or Save as new draft")
-    ctx = context(store, job_id, key)
+    ctx = context(store, job_id, key, lan)
     form = validate(ctx, edit)
     plan = _load_plan(out, key)
-    si = source_info(plan)
+    si = source_info(plan, lan_roots(store) if lan else None)
     _save_copy(store, job_id, key, form)
     edir.mkdir(parents=True, exist_ok=True)
     if action == "save":

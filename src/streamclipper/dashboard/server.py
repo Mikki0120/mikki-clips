@@ -465,9 +465,12 @@ class Handler(BaseHTTPRequestHandler):
             job_id, key = check_job_id(api[1]), library.check_key(api[3])
             srv.store.get(job_id)
             if api[4] == "edit":
-                return self._send_json(200, editor.context(srv.store, job_id, key))
+                return self._send_json(200, editor.context(srv.store, job_id, key, srv.lan))
             plan = editor._load_plan(srv.store.job_dir(job_id) / "out", key)
-            video = editor.source_info(plan)["video"]
+            try:
+                video = editor.source_info(plan, editor.lan_roots(srv.store) if srv.lan else None)["video"]
+            except ToolError as e:
+                raise HttpError(404, str(e)) from None
             if Path(video).suffix.lower() not in VIDEO_EXTS:
                 raise HttpError(404, "Not found.")
             return self._send_file(Path(video), "video/mp4")
@@ -744,7 +747,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_json(200, {"draft": name, "message": f"Imported as '{name}'. Open CapCut to edit it."})
         if action == "edit":
             res = editor.apply(
-                srv.store, srv.runner, job_id, key, str(body.get("action") or ""), body.get("edit"), srv.draft_root
+                srv.store,
+                srv.runner,
+                job_id,
+                key,
+                str(body.get("action") or ""),
+                body.get("edit"),
+                srv.draft_root,
+                srv.lan,
             )
             return self._send_json(200, res)
         if action == "delete":
@@ -839,8 +849,7 @@ class Handler(BaseHTTPRequestHandler):
             clip = library.check_key(str(body.get("clip") or ""))
             if clip not in self._share_keys({"kind": "job", "job": job_id}):
                 raise ToolError("Only clips with an MP4 can be shared.", "render the clip first")
-        share_id, token = srv.shares.create(kind, job_id, clip, body.get("days", 7))
-        days = int(body.get("days", 7))
+        share_id, token, days = srv.shares.create(kind, job_id, clip, body.get("days", 7))
         return {
             "id": share_id,
             "url": f"http://{srv.public_host}:{srv.port}/s/{token}",

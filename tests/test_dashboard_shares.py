@@ -62,10 +62,21 @@ def test_clip_and_job_shares(lan, monkeypatch):
     assert lan.req("GET", f"/s/{jt}", cookie=None)[0] == 404
 
 
+def test_bad_days_falls_back_to_7_without_a_500(lan):
+    a = lan.new_job()
+    lan.wait(a)
+    for bad in ("abc", None, [1], {"x": 1}):
+        st, r = lan.json("POST", "/api/shares", {"kind": "job", "job": a, "days": bad})
+        assert st == 201 and r["days"] == 7, (bad, r)
+    st, r = lan.json("POST", "/api/shares", {"kind": "job", "job": a, "days": 3})
+    assert st == 400 and "1, 7 or 30" in r["error"]
+
+
 def test_share_store_expiry_and_revoke(tmp_path):
     s = shares.ShareStore(tmp_path)
-    sid, tok = s.create("clip", "job1", "clip_01", days=7)
-    assert s.resolve(tok)["clip"] == "clip_01"
+    sid, tok, days = s.create("clip", "job1", "clip_01", days=7)
+    assert days == 7 and s.resolve(tok)["clip"] == "clip_01"
+    assert s.create("clip", "job1", "clip_01", days="30")[2] == 30
     assert s.resolve(tok, now=time.time() + 8 * 86400) is None
     assert tok not in (tmp_path / "shares.json").read_text(encoding="utf-8")
     s.revoke(sid)

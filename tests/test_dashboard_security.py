@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from dashboard_util import start, stop
@@ -122,6 +124,41 @@ def test_lan_local_paths_only_from_uploads(lan, tmp_path):
     outside.write_bytes(b"x")
     st, r = lan.json("POST", "/api/jobs", {"source": str(outside)})
     assert st == 400 and "uploaded" in r["error"]
+
+
+def _point_source_outside(d, job, tmp_path, window_outside=False):
+    p = d.srv.store.job_dir(job) / "out" / "clip_01.clip.json"
+    plan = json.loads(p.read_text(encoding="utf-8"))
+    private = tmp_path / "private"
+    private.mkdir(exist_ok=True)
+    (private / "stream.mp4").write_bytes(b"\x01" * 5000)
+    plan["source"] = str(private / "stream.mp4")
+    if window_outside:
+        (private / "win.mp4").write_bytes(b"\x02" * 1000)
+        plan["source_window"]["path"] = str(private / "win.mp4")
+    p.write_text(json.dumps(plan), encoding="utf-8")
+
+
+def test_lan_editor_source_stays_inside_the_workspace(lan, tmp_path):
+    a = lan.new_job()
+    lan.wait(a)
+    url = f"/api/jobs/{a}/clips/clip_01/source"
+    _point_source_outside(lan, a, tmp_path)
+    st, _h, body = lan.req("GET", url)
+    assert st == 200 and len(body) == 2048  # the clip's window file, not the stream outside the workspace
+    st, c = lan.json("GET", f"/api/jobs/{a}/clips/clip_01/edit")
+    assert st == 200 and c["original_source"] is False
+    _point_source_outside(lan, a, tmp_path, window_outside=True)
+    st, r = lan.json("GET", url)
+    assert st == 404 and "outside the workspace" in r["error"]
+
+
+def test_local_editor_source_may_be_anywhere(dash, tmp_path):
+    a = dash.new_job()
+    dash.wait(a)
+    _point_source_outside(dash, a, tmp_path)
+    st, _h, body = dash.req("GET", f"/api/jobs/{a}/clips/clip_01/source")
+    assert st == 200 and len(body) == 5000
 
 
 def test_no_secret_in_responses_or_logs(dash, monkeypatch):

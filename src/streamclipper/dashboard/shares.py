@@ -37,7 +37,7 @@ class ShareStore:
         return data if isinstance(data, list) else []
 
     def create(self, kind: str, job: str, clip: str = None, days: int = 7) -> tuple:
-        """(share id, token). The token is returned only here."""
+        """(share id, token, days used). The token is returned only here. Missing or bad days -> 7."""
         if kind not in KINDS:
             raise ToolError("Unknown share type.", "share one clip or one job")
         if kind == "clip" and not clip:
@@ -64,7 +64,7 @@ class ShareStore:
             data = self._load()
             data.append(entry)
             write_json_atomic(self.path, data)
-        return entry["id"], token
+        return entry["id"], token, days
 
     def resolve(self, token: str, now: float = None):
         """The share of a token, or None when it is unknown, expired or revoked."""
