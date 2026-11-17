@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf" content="{{CSRF}}">
+<meta name="mode" content="{{MODE}}">
+<title>StreamClipper</title>
+<link rel="icon" href="/static/logo.png">
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/theme.js"></script>
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="#/jobs"><img src="/static/logo.png" alt="" width="32" height="32"><span>StreamClipper</span></a>
+  <nav class="nav" aria-label="Main">
+    <a href="#/new" data-route="new">New job</a>
+    <a href="#/jobs" data-route="jobs">Jobs</a>
+    <a href="#/live" data-route="live">Live</a>
+    <a href="#/settings" data-route="settings">Settings</a>
+  </nav>
+  <span class="mode-badge" id="mode-badge" hidden>Network mode</span>
+  <button class="icon-btn" id="theme-toggle" type="button" aria-label="Switch theme" title="Switch theme">
+    <svg class="i-sun" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <svg class="i-moon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+  </button>
+</header>
+<main id="app" tabindex="-1"><div class="loading"><span class="spinner"></span> Loading...</div></main>
+<div id="toasts" aria-live="polite"></div>
+</body>
+</html>

@@ -338,7 +338,25 @@ def build_parser() -> argparse.ArgumentParser:
     im.add_argument(
         "--close-capcut", action="store_true", help="Force-close CapCut if it is open (unsaved CapCut edits are lost)"
     )
+
+    db = sub.add_parser("dashboard", help="Open the local web dashboard: start jobs, watch progress, manage clips")
+    db.add_argument("--port", type=int, default=8765, help="Port (default 8765)")
+    db.add_argument("--host", default="127.0.0.1", help="Listen address (default 127.0.0.1: this PC only)")
+    db.add_argument("--workspace", default="", help="Folder for jobs, uploads and clips (default ~/StreamClipper)")
+    db.add_argument("--no-browser", action="store_true", help="Do not open the browser")
+    db.add_argument(
+        "--lan",
+        action="store_true",
+        help="Also allow other devices on your network (needs the printed link with its access token)",
+    )
+    db.add_argument("--draft-root", default="", help="CapCut draft folder for Open in CapCut (default: auto-detected)")
     return ap
+
+
+def cmd_dashboard(args):
+    from streamclipper.dashboard.server import run_dashboard  # late import: only the dashboard needs it
+
+    run_dashboard(args)
 
 
 COMMANDS = {
@@ -354,6 +372,7 @@ COMMANDS = {
     "styles": cmd_styles,
     "import-draft": cmd_import_draft,
     "live": cmd_live,
+    "dashboard": cmd_dashboard,
 }
 
 
