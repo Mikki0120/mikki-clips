@@ -7,6 +7,7 @@ const LAN = MODE === "lan";
 let OPTS = null;
 let timers = [];
 let pageCleanup = [];
+let routeSeq = 0;
 
 // ---- small helpers ------------------------------------------------------------------------------------------
 
@@ -212,10 +213,14 @@ async function route() {
   const name = ROUTES[parts[0]] ? parts[0] : "jobs";
   const navName = name === "job" || name === "edit" ? "jobs" : name;
   document.querySelectorAll(".nav a").forEach((a) => a.classList.toggle("active", a.dataset.route === navName));
-  const root = document.getElementById("app");
-  root.replaceChildren(spinner());
+  // each route renders into its own container: a slow page that finishes after the user moved on
+  // writes into a detached element instead of over the new page
+  const seq = ++routeSeq;
+  const root = h("div", { class: "view", style: { display: "contents" } }, spinner());
+  document.getElementById("app").replaceChildren(root);
   try {
     if (!OPTS) OPTS = await api("GET", "/api/options");
+    if (seq !== routeSeq) return;
     await ROUTES[name](root, ...parts.slice(1));
   } catch (e) {
     root.replaceChildren(errorBox(e));

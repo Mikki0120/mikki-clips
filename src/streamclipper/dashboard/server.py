@@ -8,6 +8,7 @@ every POST/PUT needs the per-start CSRF token and a same-origin Origin; files ar
 """
 
 import errno
+import functools
 import hmac
 import html
 import json
@@ -113,17 +114,51 @@ def ollama_available() -> bool:
         return False
 
 
-def available_llms() -> list:
+class Cached:
+    """
+    A slow check (the process list for CapCut, the Ollama ping: 0.6-2 s each on Windows) that runs on a
+    background thread. Requests read the last value and start a refresh when it is older than ttl; only the very
+    first read waits for the result (at most `wait` seconds).
+    """
+
+    def __init__(self, fn, ttl: float, default=None):
+        self.fn, self.ttl, self.value = fn, float(ttl), default
+        self.at, self.busy = 0.0, False
+        self.lock = threading.Lock()
+        self.ready = threading.Event()
+
+    def _run(self):
+        try:
+            v = self.fn()
+        except Exception:
+            v = self.value
+        with self.lock:
+            self.value, self.at, self.busy = v, time.time(), False
+        self.ready.set()
+
+    def get(self, wait: float = 3.0):
+        with self.lock:
+            if not self.busy and time.time() - self.at > self.ttl:
+                self.busy = True
+                threading.Thread(target=self._run, daemon=True).start()
+        if not self.ready.is_set() and wait > 0:
+            self.ready.wait(wait)
+        return self.value
+
+
+def available_llms(ollama: bool = None) -> list:
     out = ["none"]
-    if ollama_available():
+    if ollama_available() if ollama is None else ollama:
         out.append("ollama")
     if os.environ.get("GEMINI_API_KEY"):
         out.append("gemini")
     return out
 
 
+@functools.lru_cache(maxsize=1)
 def gallery_geometry() -> dict:
-    """Where each tile of styles_gallery.jpg is (same order as gallery.make_gallery)."""
+    """Where each tile of styles_gallery.jpg is (same order as gallery.make_gallery). Computed once (the import
+    of streamclipper.gallery takes up to ~1 s), warmed on a thread when the server starts."""
     from streamclipper import gallery
 
     g = {
@@ -191,6 +226,14 @@ class DashboardServer(ThreadingHTTPServer):
         self.doctor = {"running": False, "rows": None, "ended": None}
         self.doctor_lock = threading.Lock()
         super().__init__(addr, Handler)
+        from streamclipper import env as _env
+
+        # slow checks run off the request threads (warmed here, read by /api/settings and /api/options)
+        self.capcut_open = Cached(lambda: _env.capcut_running(), 5.0, False)
+        self.ollama = Cached(lambda: ollama_available(), 30.0, False)
+        self.capcut_open.get(wait=0)
+        self.ollama.get(wait=0)
+        threading.Thread(target=gallery_geometry, daemon=True).start()
 
     def _job_finished(self, job: dict):
         library.fix_variant_name(self.store, job)
@@ -645,7 +688,7 @@ class Handler(BaseHTTPRequestHandler):
             "hook_styles": list(HOOK_STYLES),
             "hook_looks": dict(HOOK_STYLES),
             "ratios": ["9:16", "1:1"],
-            "llms": available_llms(),
+            "llms": available_llms(bool(self.server.ollama.get())),
             "share_days": list(DAYS),
             "gallery": gallery_geometry(),
             "defaults": self.server.settings(),
@@ -765,7 +808,7 @@ class Handler(BaseHTTPRequestHandler):
         raise HttpError(404, "Not found.")
 
     def _settings(self) -> dict:
-        from streamclipper.env import capcut_running, find_draft_root
+        from streamclipper.env import find_draft_root
 
         srv = self.server
         return {
@@ -776,7 +819,7 @@ class Handler(BaseHTTPRequestHandler):
             "draft_root_custom": bool(srv.draft_root),
             "gemini": "set" if os.environ.get("GEMINI_API_KEY") else "not set",
             "mode": "lan" if srv.lan else "local",
-            "capcut": "open" if capcut_running() else "closed",
+            "capcut": "open" if srv.capcut_open.get() else "closed",
         }
 
     def _save_settings(self, body: dict) -> dict:

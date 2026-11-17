@@ -153,3 +153,38 @@ def test_settings_and_doctor(dash, monkeypatch, tmp_path):
             break
         time.sleep(0.05)
     assert r["rows"][0][0] == "ffmpeg"
+
+
+def test_slow_checks_run_off_the_request_thread(dash, monkeypatch):
+    import threading
+    import time
+
+    calls = []
+    gate = threading.Event()
+
+    def slow():
+        calls.append(1)
+        gate.wait(5)
+        return len(calls) > 1
+
+    c = server.Cached(slow, ttl=-1.0, default=False)
+    t0 = time.perf_counter()
+    assert c.get(wait=0.2) is False and time.perf_counter() - t0 < 1.0  # first read waits at most `wait`
+    gate.set()
+    c.ready.wait(2)
+    gate.clear()
+    t0 = time.perf_counter()
+    assert c.get() is False and time.perf_counter() - t0 < 0.2  # later reads never wait for a refresh
+    gate.set()
+    for _ in range(100):
+        if c.value is True:
+            break
+        time.sleep(0.02)
+    assert c.value is True and len(calls) == 2
+    # /api/settings and /api/options read the cached checks: a slow CapCut/Ollama check never blocks them
+    monkeypatch.setattr(dash.srv.capcut_open, "fn", lambda: time.sleep(3) or True)
+    monkeypatch.setattr(dash.srv.capcut_open, "ttl", -1.0)
+    for path in ("/api/settings", "/api/options", "/api/settings"):
+        t0 = time.perf_counter()
+        assert dash.json("GET", path)[0] == 200
+        assert time.perf_counter() - t0 < 1.0, path
