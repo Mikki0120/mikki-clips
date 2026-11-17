@@ -1,3 +1,4 @@
+import re
 import struct
 
 import pytest
@@ -44,13 +45,67 @@ def test_index_static_and_headers(dash):
     st, h, body = dash.req("GET", "/")
     assert st == 200 and b'<meta name="csrf" content="' + dash.csrf.encode() in body
     assert "default-src 'self'" in h["Content-Security-Policy"] and h["X-Content-Type-Options"] == "nosniff"
-    for name in ("app.js", "app.css", "theme.js", "logo.png", "styles_gallery.jpg"):
+    for name in ("app.js", "icons.js", "editor.js", "app.css", "theme.js", "logo.png", "styles_gallery.jpg"):
         st, h, body = dash.req("GET", f"/static/{name}")
         assert st == 200 and body, name
-    js = (server.STATIC_DIR / "app.js").read_text(encoding="utf-8")
-    assert "innerHTML" not in js and "sc_theme" in (server.STATIC_DIR / "theme.js").read_text(encoding="utf-8")
+    # every script and stylesheet the page loads is served (STATIC_TYPES is a whitelist)
+    refs = re.findall(r'(?:src|href)="(/static/[^"]+)"', body_of_index(dash))
+    assert len(refs) >= 6
+    for ref in refs:
+        assert dash.req("GET", ref)[0] == 200, ref
+    for name in ("app.js", "icons.js", "editor.js"):
+        assert "innerHTML" not in (server.STATIC_DIR / name).read_text(encoding="utf-8"), name
+    assert "ISC License" in (server.STATIC_DIR / "icons.js").read_text(encoding="utf-8")
+    assert "sc_theme" in (server.STATIC_DIR / "theme.js").read_text(encoding="utf-8")
     css = (server.STATIC_DIR / "app.css").read_text(encoding="utf-8")
-    assert '[data-theme="dark"]' in css and "#0a0a0a" in css and "#8b5cf6" in css.lower()
+    assert '[data-theme="dark"]' in css and "#09090b" in css and "#8b5cf6" in css.lower()
+
+
+def body_of_index(dash) -> str:
+    return dash.req("GET", "/")[2].decode("utf-8")
+
+
+def test_source_kind():
+    sk = server.source_kind
+    assert sk("https://www.twitch.tv/videos/123") == "twitch" and sk("https://m.twitch.tv/x") == "twitch"
+    assert sk("https://youtu.be/abc") == "youtube" and sk("https://www.youtube.com/watch?v=a") == "youtube"
+    assert sk("https://kick.com/x") == "kick" and sk("https://example.com/v.mp4") == "link"
+    assert sk(r"D:\Videos\a.mp4") == "file" and sk("") == "file" and sk("https://[bad") == "link"
+    assert sk("https://nottwitch.tv/x") == "link"
+
+
+def test_job_cards_have_thumb_count_and_source(dash):
+    import time
+
+    ids = {
+        "twitch": dash.new_job(source="https://www.twitch.tv/videos/1", max_clips=2),
+        "youtube": dash.new_job(source="https://www.youtube.com/watch?v=x"),
+        "kick": dash.new_job(source="https://kick.com/someone/videos/1"),
+    }
+    for jid in ids.values():
+        dash.wait(jid)
+    jobs = {j["id"]: j for j in dash.json("GET", "/api/jobs")[1]["jobs"]}
+    for kind, jid in ids.items():
+        assert jobs[jid]["source_kind"] == kind
+    tw = jobs[ids["twitch"]]
+    assert tw["clip_count"] == 2 and tw["thumb_url"] == f"/files/{ids['twitch']}/out/clip_01_thumb.jpg"
+    assert dash.req("GET", tw["thumb_url"])[0] == 200
+    # a deleted clip no longer counts, and the next clip's thumbnail is used
+    assert dash.json("POST", f"/api/jobs/{ids['twitch']}/clips/clip_01/delete", {"confirm": True})[0] == 200
+    tw = next(j for j in dash.json("GET", "/api/jobs")[1]["jobs"] if j["id"] == ids["twitch"])
+    assert tw["clip_count"] == 1 and tw["thumb_url"].endswith("/clip_02_thumb.jpg")
+    # file jobs, and jobs without clips yet
+    store = dash.srv.store
+    for i in range(20):
+        store.create("vod", f"stream_{i}.mp4", ["x"], {"mode": "vod"})
+    t0 = time.perf_counter()
+    st, r = dash.json("GET", "/api/jobs")
+    took = time.perf_counter() - t0
+    assert st == 200 and took < 0.2, took
+    files = [j for j in r["jobs"] if j["label"].startswith("stream_")]
+    assert len(files) == 20 and all(
+        j["source_kind"] == "file" and j["clip_count"] == 0 and j["thumb_url"] == "" for j in files
+    )
 
 
 def test_vod_job_runs_queue_cancel_resume_files_mark_rerender(dash, tmp_path):

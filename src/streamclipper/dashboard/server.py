@@ -48,6 +48,8 @@ from streamclipper.util import VIDEO_EXTS, ToolError
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 STATIC_TYPES = {
     "app.js": "application/javascript; charset=utf-8",
+    "icons.js": "application/javascript; charset=utf-8",
+    "editor.js": "application/javascript; charset=utf-8",
     "theme.js": "application/javascript; charset=utf-8",
     "app.css": "text/css; charset=utf-8",
     "share.css": "text/css; charset=utf-8",
@@ -190,6 +192,20 @@ def safe_upload_name(name: str) -> str:
     return stem[:120] + ext.lower()
 
 
+def source_kind(source: str) -> str:
+    """Icon of a job card: twitch / youtube / kick for their links, link for other URLs, file for a video file."""
+    if not re.match(r"^https?://", source or "", re.I):
+        return "file"
+    try:
+        host = (urlsplit(source).hostname or "").lower()
+    except ValueError:
+        return "link"
+    for kind, hosts in (("twitch", ("twitch.tv",)), ("youtube", ("youtube.com", "youtu.be")), ("kick", ("kick.com",))):
+        if any(host == h or host.endswith("." + h) for h in hosts):
+            return kind
+    return "link"
+
+
 def _scrub(text: str) -> str:
     key = os.environ.get("GEMINI_API_KEY", "")
     return str(text).replace(key, "***") if key else str(text)
@@ -225,6 +241,7 @@ class DashboardServer(ThreadingHTTPServer):
         self.public_host = lan_ip() if lan else "127.0.0.1"
         self.doctor = {"running": False, "rows": None, "ended": None}
         self.doctor_lock = threading.Lock()
+        self.card_cache = {}  # job id -> (signature, {thumb_url, clip_count}) for the Projects grid
         super().__init__(addr, Handler)
         from streamclipper import env as _env
 
@@ -571,7 +588,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _static(self, name: str):
         ctype = STATIC_TYPES.get(name)
-        if not ctype:
+        if not ctype or not (STATIC_DIR / name).is_file():
             raise HttpError(404, "Not found.")
         self._send(200, (STATIC_DIR / name).read_bytes(), ctype, {"Cache-Control": "no-cache"})
 
@@ -713,7 +730,32 @@ class Handler(BaseHTTPRequestHandler):
         out = {k: job.get(k) for k in keys}
         q = self.server.runner.queued_ids()
         out["queue_pos"] = q.index(job["id"]) + 1 if job["id"] in q else None
+        out["source_kind"] = source_kind(job.get("label") or "")
+        out.update(self._card_data(job))
         return out
+
+    def _card_data(self, job: dict) -> dict:
+        """Thumbnail and clip count of a job card: clips.json + file checks only (no ffprobe), cached by mtime."""
+        out = self.server.store.job_dir(job["id"]) / "out"
+        doc_p = out / "clips.json"
+        try:
+            sig = (out.stat().st_mtime_ns, doc_p.stat().st_mtime_ns, tuple(job.get("deleted") or []))
+        except OSError:
+            return {"thumb_url": "", "clip_count": 0}
+        hit = self.server.card_cache.get(job["id"])
+        if hit and hit[0] == sig:
+            return dict(hit[1])
+        deleted = set(sig[2])
+        clips = [c for c in library.load_doc(out).get("clips") or [] if isinstance(c, dict)]
+        clips = sorted((c for c in clips if library.clip_key(c) not in deleted), key=lambda c: c.get("rank") or 0)
+        thumb = ""
+        for c in clips:
+            thumb = library._file_url(job["id"], out, c.get("thumb"))
+            if thumb:
+                break
+        data = {"thumb_url": thumb, "clip_count": len(clips)}
+        self.server.card_cache[job["id"]] = (sig, data)
+        return dict(data)
 
     def _jobs(self) -> list:
         return [self._public_job(j) for j in self.server.store.list()]
