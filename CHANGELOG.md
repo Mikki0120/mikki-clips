@@ -1,4 +1,9 @@
 # Changelog
+## Unreleased
+### Changed
+- default --prefix is now clip (was GTA6_Viral): `clip-stream` without `--prefix` writes `clip_01.mp4`, the same names as `render` and the dashboard.
+### Fixed
+- Dashboard: in `--lan` mode the editor serves only videos inside the workspace; bad share `days` no longer gives a 500; Settings and Options no longer wait on the CapCut/Ollama checks; a slow page can no longer replace the page you moved to; the editor caches its source probe.
 
 ## 5.1.0 (2026-11-17)
 

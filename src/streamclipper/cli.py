@@ -226,7 +226,7 @@ def build_parser() -> argparse.ArgumentParser:
     cs.add_argument("--input", default="", help="Source 16:9 stream/gameplay video")
     cs.add_argument("--url", default="", help="YouTube URL: use the most-replayed slice")
     cs.add_argument("--out", required=True, help="Working directory for analysis, panels and specs")
-    cs.add_argument("--prefix", default="GTA6_Viral", help="Output CapCut draft name prefix")
+    cs.add_argument("--prefix", default="clip", help="Name prefix of the drafts and MP4s (clip_01, clip_02, ...)")
     cs.add_argument("--ratio", choices=["9:16", "1:1"], default=None, help="Target aspect ratio (default 9:16)")
     cs.add_argument(
         "--hook-mode", choices=list(OPT_CHOICES["hook_mode"]), default=None, help="Hook style (default tease-climax)"

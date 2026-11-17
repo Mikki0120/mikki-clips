@@ -39,3 +39,11 @@ def test_render_suffixes_ignore_the_plan_itself(tmp_path):
     assert unique_output_name(tmp_path, "clip_01", suffixes=RENDER_SUFFIXES) == "clip_01"
     (tmp_path / "clip_01.mp4").write_bytes(b"x")
     assert unique_output_name(tmp_path, "clip_01", suffixes=RENDER_SUFFIXES) == "clip_01_2"
+
+
+def test_default_prefix_is_clip():
+    from streamclipper.cli import build_parser
+
+    p = build_parser()
+    assert p.parse_args(["clip-stream", "--input", "x.mp4", "--out", "w"]).prefix == "clip"
+    assert p.parse_args(["render", "--clips", "c.json", "--video", "x.mp4"]).prefix == "clip"

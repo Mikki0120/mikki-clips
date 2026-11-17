@@ -31,7 +31,7 @@ streamclipper styles
 |---|---|
 | `doctor` | `--json` |
 | `discover-clips` | `--video` or `--url`, `--out` (required), `--max-clips 0` (= all; old `--top`), `--min-score 50`, `--chat FILE`, `--llm none\|ollama\|gemini`, `--llm-model`, `--asr auto`, `--whisper-model auto`, `--device auto`, `--fresh`, `--language auto`, `--min-dur 15`, `--max-dur 45`, `--target-dur 24` |
-| `clip-stream` | `--input` or `--url`, `--out` (required), `--prefix GTA6_Viral`, `--max-clips 3` (drafts; all clips go to clips.json), the discovery flags, layout/caption flags, `--draft-root`, `--overwrite`, `--close-capcut`, `--no-draft`, `--portable-drafts`, `--render` |
+| `clip-stream` | `--input` or `--url`, `--out` (required), `--prefix clip`, `--max-clips 3` (drafts; all clips go to clips.json), the discovery flags, layout/caption flags, `--draft-root`, `--overwrite`, `--close-capcut`, `--no-draft`, `--portable-drafts`, `--render` |
 | `render` | `--clips clips.json --video SRC` or `--spec <clip.json or clip spec>`, `--max-clips 0`, `--out`, `--prefix clip`, layout/caption flags; never writes a draft |
 | `build` / `build-clipper` | `--spec` (required), `--out`, layout/caption flags, draft flags, `--portable-drafts`, `--render` |
 | `import-draft` | `--zip` (required), `--draft-root`, `--overwrite`, `--close-capcut` |
