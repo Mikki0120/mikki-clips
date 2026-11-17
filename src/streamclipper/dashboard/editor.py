@@ -212,7 +212,7 @@ def source_info(plan: dict, roots=None) -> dict:
     if not win.is_file():
         raise ToolError("The clip's source video is gone.", "the window file was moved or deleted; run the job again")
     if roots is not None and not _inside(win, roots):
-        raise ToolError("The source video is outside the workspace.", "edit this clip on the PC that runs StreamClipper")
+        raise ToolError("The source video is outside the workspace.", "edit this clip on the PC that runs it")
     return {"video": win, "t_off": float(sw.get("offset") or 0.0), "original": False}
 
 
