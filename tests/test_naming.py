@@ -20,6 +20,12 @@ def test_every_sidecar_counts(tmp_path):
         assert unique_output_name(d, "c") == "c_2", suffix
 
 
+def test_gate_sidecar_alone_takes_the_name(tmp_path):
+    (tmp_path / "clip_01.gate.json").write_text("{}", encoding="utf-8")
+    assert unique_output_name(tmp_path, "clip_01") == "clip_01_2"
+    assert unique_output_name(tmp_path, "clip_01", suffixes=RENDER_SUFFIXES) == "clip_01_2"
+
+
 def test_draft_folder_counts_only_with_draft_root(tmp_path):
     out, root = tmp_path / "out", tmp_path / "drafts"
     out.mkdir()

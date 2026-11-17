@@ -13,8 +13,17 @@ from streamclipper.util import fwd
 _ROOT_META_BACKED_UP = set()
 
 # Every file one clip writes into its output folder; all of them share the clip name.
-OUTPUT_SUFFIXES = (".mp4", ".clip.json", "_spec.json", ".timeline.json", "_timeline.json", "_thumb.jpg", ".graph.txt")
-RENDER_SUFFIXES = (".mp4", ".timeline.json", "_thumb.jpg", ".graph.txt")
+OUTPUT_SUFFIXES = (
+    ".mp4",
+    ".clip.json",
+    "_spec.json",
+    ".timeline.json",
+    "_timeline.json",
+    "_thumb.jpg",
+    ".graph.txt",
+    ".gate.json",
+)
+RENDER_SUFFIXES = (".mp4", ".timeline.json", "_thumb.jpg", ".graph.txt", ".gate.json")
 ROLLING_BACKUPS = 5
 _ROLLING_RE = re.compile(r"\.streamclipper_\d{8}-\d{6}\.bak$")
 

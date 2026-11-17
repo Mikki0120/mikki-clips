@@ -6,6 +6,7 @@ from pathlib import Path
 
 from streamclipper.audio import _np
 from streamclipper.render import ebur128_summary, mp4_faststart, render_plan_mp4
+from streamclipper.state import write_json_atomic
 from streamclipper.thumbs import make_thumbnail
 from streamclipper.util import ToolError, fwd, run_cmd
 from streamclipper.vision import _iou, check_face_box, detect_faces
@@ -388,7 +389,10 @@ def print_gate_table(title: str, rows: list) -> bool:
 def render_and_gate(plan: dict, out_mp4: Path) -> bool:
     """Render, run the export gate and, when it passes, write <name>_thumb.jpg."""
     mp4 = render_plan_mp4(plan, out_mp4)
-    ok = print_gate_table(f"EXPORT GATE: {mp4.name}", gate_mp4(mp4))
+    rows = gate_mp4(mp4)
+    ok = print_gate_table(f"EXPORT GATE: {mp4.name}", rows)
+    # <name>.gate.json: the same table for the dashboard's audit view
+    write_json_atomic(mp4.with_name(f"{mp4.stem}.gate.json"), {"pass": ok, "rows": [list(r) for r in rows]})
     if ok:
         try:
             make_thumbnail(plan, mp4)
