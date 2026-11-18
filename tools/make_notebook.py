@@ -32,6 +32,9 @@ thumbnails, a `clips.csv`/`index.html` report and editable CapCut Desktop drafts
 
 Drive access stays inside your own Google account. StreamClipper has no server.
 
+Publishing to YouTube Shorts or Instagram Reels runs from your PC (`streamclipper publish` or the dashboard),
+not from Colab: download the MP4s, then publish them there.
+
 Clip only streams you have permission to clip (the streamer's permission or an official clipping program).
 """
 
@@ -72,9 +75,9 @@ if LOCAL_SRC:
     project = Path("/tmp/streamclipper_src")
     shutil.rmtree(project, ignore_errors=True)
     shutil.copytree(LOCAL_SRC, project, ignore=shutil.ignore_patterns(".agents", ".git", "__pycache__"))
-    target = f"{project}[asr]"
+    target = f"{project}[asr,vision]"
 elif install_from == "github":
-    target = f"streamclipper[asr] @ git+{github_repo}"
+    target = f"streamclipper[asr,vision] @ git+{github_repo}"
 else:
     if (
         drive_zip_path.startswith("/content/drive")
@@ -88,7 +91,7 @@ else:
     with zipfile.ZipFile(drive_zip_path) as zf:
         zf.extractall(src_dir)
     project = next(p.parent for p in src_dir.rglob("pyproject.toml"))
-    target = f"{project}[asr]"
+    target = f"{project}[asr,vision]"
 subprocess.run([sys.executable, "-m", "pip", "install", "-q", target], check=True)
 subprocess.run(["streamclipper", "doctor"])
 """
@@ -172,6 +175,12 @@ make_drafts = True  #@param {type:"boolean"}
 #@markdown **Share on Drive** makes "anyone with the link can view" Drive links for the finished MP4s,
 #@markdown index.html and clips.csv. Anyone with the link can see the clip. Default off.
 share_on_drive = False  #@param {type:"boolean"}
+#@markdown Game screen events (WASTED, BUSTED, mission passed, wanted stars): `auto` picks the game profile.
+hud = "auto"  #@param ["auto", "off", "gta5", "gta6", "generic"]
+#@markdown Editing effects (all off by default): punch-in zoom on the payoff, filler-word removal, speech cleanup.
+zoom = "off"  #@param ["off", "light", "medium", "strong"]
+remove_fillers = False  #@param {type:"boolean"}
+enhance_speech = "off"  #@param ["off", "light", "strong"]
 
 LLM = ("ollama" if globals().get("LLM_READY", False) else "none") if llm == "auto" else llm
 print("LLM:", LLM)
@@ -199,6 +208,10 @@ try:
         drafts=make_drafts,
         cookies=cookies_path,
         resume=True,
+        hud=hud,
+        zoom=zoom,
+        remove_fillers=remove_fillers,
+        enhance_speech=enhance_speech,
     )
     if result and share_on_drive:
         share_run(result)

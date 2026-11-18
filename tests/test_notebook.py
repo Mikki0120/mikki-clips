@@ -62,6 +62,21 @@ def test_drive_is_optional_and_drive_links_are_opt_in():
     assert "progress is not saved" in src
 
 
+def test_53_options_and_vision_install():
+    cells = [c.source for c in _nb().cells]
+    install = next(c for c in cells if c.startswith("#@title 2."))
+    assert install.count("[asr,vision]") == 3 and "[asr]" not in install
+    opts = next(c for c in cells if c.startswith("#@title 6."))
+    assert 'hud = "auto"  #@param ["auto", "off", "gta5", "gta6", "generic"]' in opts
+    assert 'zoom = "off"  #@param ["off", "light", "medium", "strong"]' in opts
+    assert 'remove_fillers = False  #@param {type:"boolean"}' in opts
+    assert 'enhance_speech = "off"  #@param ["off", "light", "strong"]' in opts
+    run = next(c for c in cells if c.startswith("#@title 7."))
+    for kw in ("hud=hud", "zoom=zoom", "remove_fillers=remove_fillers", "enhance_speech=enhance_speech"):
+        assert kw in run
+    assert "Publishing to YouTube Shorts or Instagram Reels runs from your PC" in cells[0]
+
+
 def test_caption_style_defaults_to_auto_with_the_gallery():
     src = "\n".join(c.source for c in _nb().cells if c.cell_type == "code")
     assert src.count('caption_style = "auto"  #@param ["auto", ') == 2
