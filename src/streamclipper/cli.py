@@ -25,6 +25,7 @@ from streamclipper.commands import (
 from streamclipper.discovery import ASR_MODES
 from streamclipper.draft.audit import cmd_audit
 from streamclipper.draft.importer import cmd_import_draft
+from streamclipper.effects import ENHANCE_MIX, ZOOM_LEVELS
 from streamclipper.hud.analyze import HUD_MODES
 from streamclipper.live.command import add_live_parser, cmd_live
 from streamclipper.llm import PROVIDERS
@@ -178,6 +179,36 @@ def _add_caption_flags(p):
     )
 
 
+def _add_effect_flags(p):
+    p.add_argument(
+        "--zoom",
+        choices=list(ZOOM_LEVELS),
+        default=None,
+        help="Punch-in zoom on the payoff and hype words: light 1.08x, medium 1.12x, strong 1.2x; never crops a "
+        "known face (default off)",
+    )
+    p.add_argument(
+        "--remove-fillers",
+        action="store_true",
+        default=None,
+        help="Cut um/uh and filler 'like,'/'you know' between words; the payoff and the first 2 s keep theirs "
+        "(default off)",
+    )
+    p.add_argument(
+        "--enhance-speech",
+        choices=list(ENHANCE_MIX),
+        default=None,
+        help="Reduce background noise and some room echo in the voice (RNNoise); light keeps more game sound "
+        "(default off)",
+    )
+    p.add_argument(
+        "--brand-kit",
+        default=None,
+        help="Brand kit JSON: logo, @handle, caption font, colours, intro/outro card "
+        "(see docs/examples/brand_kit.json)",
+    )
+
+
 def _add_layout_flags(p):
     p.add_argument(
         "--preset",
@@ -276,6 +307,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_hud_flags(cs)
     _add_layout_flags(cs)
+    _add_effect_flags(cs)
     _add_draft_flags(cs)
 
     for name, hlp in (
@@ -286,6 +318,7 @@ def build_parser() -> argparse.ArgumentParser:
         bd.add_argument("--spec", required=True, help="Path to the spec JSON")
         bd.add_argument("--out", default="", help="Work folder for panels/specs (default: next to the spec)")
         _add_layout_flags(bd)
+        _add_effect_flags(bd)
         _add_draft_flags(bd)
 
     au = sub.add_parser("audit", help="Check a built CapCut draft (files, materials, UTF-16 ranges, registration)")
@@ -325,6 +358,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--hindi-script", choices=["devanagari", "roman"], default="devanagari", help="How Hindi captions are written"
     )
     _add_layout_flags(rn)
+    _add_effect_flags(rn)
     _add_draft_flags(rn, render=False)
 
     sy = sub.add_parser("styles", help="List the caption styles, hook banner styles and caption fonts")

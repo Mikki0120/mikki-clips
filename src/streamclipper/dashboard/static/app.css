@@ -681,3 +681,8 @@ table.keys td:first-child { white-space: nowrap; width: 1%; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; }
 }
+
+/* 5.3 editing effects (Home drawer, Settings brand kit) */
+.adv-effects { border-top: 1px solid var(--border, rgba(127,127,127,.25)); padding-top: 12px; margin-top: 4px; }
+.adv-sub { font-size: 14px; font-weight: 650; margin: 0; }
+.warn-hint { background: var(--warn-soft); color: var(--warn); padding: 8px 10px; border-radius: 8px; display: flex; gap: 6px; align-items: flex-start; }

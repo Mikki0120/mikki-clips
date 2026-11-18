@@ -138,6 +138,17 @@ def _clip_argv(source: str, work: Path, o: dict) -> list:
     ):
         if o.get(key):
             argv += [flag, str(o[key])]
+    # 5.3 effects and HUD: only passed when not the default, so older callers get the same argv
+    if (o.get("zoom") or "off") != "off":
+        argv += ["--zoom", str(o["zoom"])]
+    if o.get("remove_fillers"):
+        argv.append("--remove-fillers")
+    if (o.get("enhance_speech") or "off") != "off":
+        argv += ["--enhance-speech", str(o["enhance_speech"])]
+    if o.get("brand_kit"):
+        argv += ["--brand-kit", str(o["brand_kit"])]
+    if (o.get("hud") or "auto") != "auto":
+        argv += ["--hud", str(o["hud"])]
     if o["render"]:
         argv.append("--render")
     if o["drafts"]:
@@ -170,12 +181,19 @@ def run_pipeline(
     prefix: str = "clip",
     llm_model: str = "",
     chat: str = "",
+    zoom: str = "off",
+    remove_fillers: bool = False,
+    enhance_speech: str = "off",
+    brand_kit: str = "",
+    hud: str = "auto",
 ) -> dict:
     """
     Stream -> ranked clips (clips.json, clips.csv, index.html) -> MP4s + thumbnails (render) -> portable
     CapCut drafts zipped to <out_dir>/capcut_drafts.zip (drafts). Same code path as 'streamclipper clip-stream'.
     Progress is saved in <out_dir>; running it again with the same inputs resumes (resume=False starts over).
     max_clips = how many clips get an MP4/draft (0 = every clip above min_score; all clips go to clips.json).
+    Effects (all off by default): zoom off|light|medium|strong, remove_fillers, enhance_speech off|light|strong,
+    brand_kit = path of a brand kit JSON (e.g. on Drive). hud = auto|off|gta5|gta6|generic.
     """
     from streamclipper.cli import build_parser  # late import: cli imports every command module
     from streamclipper.commands import clip_stream
@@ -203,7 +221,14 @@ def run_pipeline(
         "drafts": drafts,
         "draft_root": droot,
         "resume": resume,
+        "zoom": zoom or "off",
+        "remove_fillers": bool(remove_fillers),
+        "enhance_speech": enhance_speech or "off",
+        "brand_kit": str(brand_kit or "").strip(),
+        "hud": hud or "auto",
     }
+    if opts["brand_kit"] and not Path(opts["brand_kit"]).is_file():
+        raise ToolError("The brand kit file was not found.", "check the brand_kit path, or leave it empty")
     args = build_parser().parse_args(_clip_argv(str(source).strip(), out, opts))
     if cookies:
         if not Path(cookies).is_file():

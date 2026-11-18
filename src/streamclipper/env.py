@@ -198,6 +198,9 @@ def resolve_font(font_choice: str, text_sample: str, assets: dict, capcut_local:
     has_devanagari = any(0x0900 <= ord(ch) <= 0x097F for ch in (text_sample or ""))
     if has_devanagari and "baloo" in fonts:
         return fonts["baloo"], ""
+    fp = Path(str(font_choice or ""))
+    if fp.suffix.lower() in (".ttf", ".otf") and fp.is_file():  # a brand kit font file
+        return str(fp.resolve()).replace("\\", "/"), ""
     choice = (font_choice or "barlow").lower()
     if choice in fonts:
         return fonts[choice], ""

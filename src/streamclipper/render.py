@@ -8,15 +8,47 @@ import struct
 from pathlib import Path
 
 from streamclipper.audio import measure_loudness
-from streamclipper.captions.ass import build_ass
+from streamclipper.brand import HANDLE_SIZE, card_seconds, load_brand_kit, plan_brand
+from streamclipper.captions.ass import _ass_escape, _ass_time, build_ass
 from streamclipper.captions.coverage import spoken_words_tl
 from streamclipper.captions.styles import FONT_FILES
-from streamclipper.env import _first_line
+from streamclipper.effects import ENHANCE_MIX, effects_of, perspective_filter, zoom_plan_for
+from streamclipper.env import _first_line, ttf_full_name
 from streamclipper.layout import apply_caption_anchor, layout_boxes, probe_video
 from streamclipper.paths import TEMPLATE_DIR
 from streamclipper.util import ToolError, fwd, run_cmd
 
 RENDER_FPS = 30
+RNNOISE_MODEL = Path(__file__).resolve().parent / "data" / "models" / "bd.rnnn"  # RNNoise-nu beguiling-drafter
+
+
+ARNNDN_DELAY = 480  # samples at 48 kHz: arnndn's output lags its input by one RNNoise frame (10 ms, measured)
+
+
+def enhance_mix(level: str):
+    """--enhance-speech: the share of denoised signal (light 0.6, strong 0.9), None when off."""
+    return ENHANCE_MIX.get(level or "off")
+
+
+def enhance_lines(head: str, mix: float, tag: str) -> tuple:
+    """
+    Speech enhancement on one audio chain: highpass, then RNNoise (arnndn, fully wet) mixed with the dry signal
+    delayed by the same 10 ms, and the 10 ms taken off again so the lane stays in sync with the video.
+    (arnndn's own mix option blends its delayed output with the undelayed input: a comb filter that sounds
+    phasey.) head: the chain so far, ending in ','; returns (statements, the new head ending in ',').
+    Runs in <out>/_render/<clip> (the model is copied to <out>/_render/_models).
+    """
+    d = ARNNDN_DELAY
+    lines = [
+        f"{head}highpass=f=70,asplit=2[{tag}d][{tag}w]",
+        f"[{tag}w]arnndn=m=../_models/{RNNOISE_MODEL.name}:mix=1[{tag}n]",
+        f"[{tag}d]adelay=delays={d}S|{d}S[{tag}dd]",
+    ]
+    new_head = (
+        f"[{tag}n][{tag}dd]amix=inputs=2:weights='{mix:g} {1 - mix:g}':normalize=0,"
+        f"atrim=start_sample={d},asetpts=PTS-STARTPTS,"
+    )
+    return lines, new_head
 
 
 _FFMPEG_MAJOR = []
@@ -34,16 +66,21 @@ def _graph_args(graph_file: str) -> list:
     return ["-/filter_complex", graph_file] if ffmpeg_major() >= 7 else ["-filter_complex_script", graph_file]
 
 
-def _audio_graph(lanes: list, segs: list, main_idx: dict, has_audio: bool, sfx: list, sfx_idx0: int) -> tuple:
-    """Shared audio graph (both loudnorm passes): per-segment atrim + 12 ms fades, then SFX mixed in."""
+def _audio_graph(
+    lanes: list, segs: list, main_idx: dict, has_audio: bool, sfx: list, sfx_idx0: int, enhance: float = None
+) -> tuple:
+    """Shared audio graph (both loudnorm passes): per-segment atrim + 12 ms fades, then SFX mixed in.
+    enhance: the speech enhancement mix (enhance_mix), applied to each main lane before the cuts."""
     g, labels = [], {}
     for L, lane in enumerate(lanes):
         k = len(lane["idx"])
         outs = "".join(f"[as{i}]" for i in lane["idx"])
         if has_audio:
-            g.append(
-                f"[{main_idx[L]}:a]aformat=sample_rates=48000:channel_layouts=stereo,apad=pad_dur=0.5,asplit={k}{outs}"
-            )
+            head = f"[{main_idx[L]}:a]aformat=sample_rates=48000:channel_layouts=stereo,"
+            if enhance:
+                pre, head = enhance_lines(head, enhance, f"en{L}x")
+                g += pre
+            g.append(f"{head}apad=pad_dur=0.5,asplit={k}{outs}")
         else:
             span = (lane["end"] - lane["a0"]) / RENDER_FPS + 0.5
             g.append(f"anullsrc=r=48000:cl=stereo,atrim=duration={span:.6f},asplit={k}{outs}")
@@ -285,7 +322,23 @@ def render_plan_mp4(plan: dict, out_mp4: Path) -> Path:
     for fn in FONT_FILES.values():
         if (TEMPLATE_DIR / "fonts" / fn).is_file() and not (fdir / fn).is_file():
             shutil.copy2(TEMPLATE_DIR / "fonts" / fn, fdir / fn)
-    cap_info = build_ass(plan, lay, rdir / "clip.ass", fdir)
+    eff = effects_of(plan)
+    kit = load_brand_kit(eff["brand_kit"]) if eff["brand_kit"] else None
+    enh = enhance_mix(eff["enhance_speech"]) if mmeta["has_audio"] else None
+    if enh:
+        mdir = out_mp4.parent / "_render" / "_models"
+        mdir.mkdir(parents=True, exist_ok=True)
+        if not (mdir / RNNOISE_MODEL.name).is_file():
+            shutil.copy2(RNNOISE_MODEL, mdir / RNNOISE_MODEL.name)
+    brand_ass = None
+    if kit:
+        brand_ass = {"hook_box": kit["colours"].get("hook_box") or ""}
+        if kit["font"]:
+            fp = Path(kit["font"])
+            if not (fdir / fp.name).is_file() or (fdir / fp.name).stat().st_size != fp.stat().st_size:
+                shutil.copy2(fp, fdir / fp.name)
+            brand_ass["font"] = ttf_full_name(fdir / fp.name) or ""
+    cap_info = build_ass(plan, lay, rdir / "clip.ass", fdir, brand=brand_ass)
     cap_info["words_tl"] = spoken_words_tl(plan)  # the export gate's caption_coverage row
 
     def lane_input(L, path):
@@ -336,11 +389,11 @@ def render_plan_mp4(plan: dict, out_mp4: Path) -> Path:
     voice_lufs = None
     if has_audio and sfx:
         # SFX at least 6 dB under the voice: cap each event by its file loudness vs the voice lane
-        ag0, labels0, _ = _audio_graph(lanes, segs, p1_idx, has_audio, [], len(lanes))
+        ag0, labels0, _ = _audio_graph(lanes, segs, p1_idx, has_audio, [], len(lanes), enh)
         tail0, alab0 = mix_tail(labels0, [])
         voice_lufs, _ = loudness_measure(p1_inputs, ";\n".join(ag0 + tail0 + [f"{alab0}ebur128=peak=true[aout]"]), rdir)
         sfx = [dict(e, volume=sfx_volume_cap(e["volume"], voice_lufs, _sfx_lufs(e["source"]))) for e in sfx]
-    ag, labels, mix = _audio_graph(lanes, segs, p1_idx, has_audio, sfx, len(lanes))
+    ag, labels, mix = _audio_graph(lanes, segs, p1_idx, has_audio, sfx, len(lanes), enh)
     tail, alab = mix_tail(labels, mix)
     # Loudness: measure the mix, then gain (+ compressor stage) + limiter, re-measured until within
     # 0.3 LU of -11 LUFS. (Two-pass loudnorm cannot stay linear at -11 LUFS / -1.5 dBTP on stream audio
@@ -454,19 +507,29 @@ def render_plan_mp4(plan: dict, out_mp4: Path) -> Path:
             g.append(f"[mv{i}]trim=start_frame={a}:end_frame={a + s['n']},setpts=PTS-STARTPTS{zf}[m{i}]")
             if stacked:
                 g.append(f"[ov{i}]trim=start_frame={a}:end_frame={a + s['n']},setpts=PTS-STARTPTS[o{i}]")
-    ag, labels, mix = _audio_graph(lanes, segs, main_idx, has_audio, sfx, n_in)
+    ag, labels, mix = _audio_graph(lanes, segs, main_idx, has_audio, sfx, n_in, enh)
     g += ag
     cat_in = "".join(f"[m{i}]" + (f"[o{i}]" if stacked else "") + labels[i] for i in range(len(segs)))
+    zp = zoom_plan_for(plan) if eff["zoom"] != "off" else None
+    z_main = perspective_filter(zp["main"], fps) if zp else ""
+    z_ov = perspective_filter(zp["overlay"], fps) if zp and stacked else ""
+    m_lab, o_lab = ("[mcat0]" if z_main else "[mcat]"), ("[ocat0]" if z_ov else "[ocat]")
     g.append(
         f"{cat_in}concat=n={len(segs)}:v={2 if stacked else 1}:a=1"
-        + ("[mcat][ocat][acat]" if stacked else "[mcat][acat]")
+        + (f"{m_lab}{o_lab}[acat]" if stacked else f"{m_lab}[acat]")
     )
+    if z_main:
+        g.append(f"[mcat0]{z_main}[mcat]")
+    if z_ov:
+        g.append(f"[ocat0]{z_ov}[ocat]")
     if mix:
         g.append(f"[acat]{''.join(mix)}amix=inputs={1 + len(mix)}:normalize=0:duration=first[amx]")
         alab = "[amx]"
     else:
         alab = "[acat]"
-    g.append(f"{alab}{ln2}[aout]")
+    intro_n, outro_n = (int(round(s * fps)) for s in card_seconds(kit))
+    cards = bool(intro_n or outro_n)
+    g.append(f"{alab}{ln2}" + ("[abody]" if cards else "[aout]"))
     if stacked:
         if ometa["width"] != W or ometa["height"] + mmeta["height"] != H:
             raise ToolError("Panel sizes do not add up to the canvas.", "re-run the clip so panels are rebuilt")
@@ -480,7 +543,13 @@ def render_plan_mp4(plan: dict, out_mp4: Path) -> Path:
         g.append("[mfr][fl]vstack=inputs=2:shortest=1[stk]")
     else:
         g.append("[mcat]null[stk]")
-    g.append("[stk]ass=clip.ass:fontsdir=../_fonts,format=yuv420p[vout]")
+    brand_info, brand_inputs = None, []
+    if kit is None:
+        g.append("[stk]ass=clip.ass:fontsdir=../_fonts,format=yuv420p[vout]")
+    else:
+        brand_info, brand_inputs = _brand_graph(
+            g, kit, plan, lay, cap_info, total, (intro_n, outro_n), rdir, n_in + len(sfx), stacked
+        )
     gfile = rdir / "graph.txt"
     gfile.write_text(";\n".join(g), encoding="utf-8")
     shutil.copy2(gfile, out_mp4.with_name(f"{out_mp4.stem}.graph.txt"))
@@ -496,6 +565,7 @@ def render_plan_mp4(plan: dict, out_mp4: Path) -> Path:
             "error",
             *inputs,
             *sfx_inputs,
+            *brand_inputs,
             *_graph_args(gfile.name),
             "-map",
             "[vout]",
@@ -535,13 +605,17 @@ def render_plan_mp4(plan: dict, out_mp4: Path) -> Path:
     os.replace(tmp, out_mp4)
 
     sw = plan.get("source_window") or {}
+    shift = intro_n / fps  # an intro card moves everything after it
+    if shift:
+        cap_info["spans"] = [[round(s[0] + shift, 3), round(s[1] + shift, 3), *s[2:]] for s in cap_info["spans"]]
+        cap_info["words_tl"] = [[w[0], round(w[1] + shift, 3), round(w[2] + shift, 3)] for w in cap_info["words_tl"]]
     sidecar = {
         "tool": "capcut_studio",
         "version": "3.1",
         "type": "timeline",
         "name": name,
         "mp4": fwd(out_mp4),
-        "expected_duration": round(total, 3),
+        "expected_duration": round(total + (intro_n + outro_n) / fps, 3),
         "plan_expected_duration": plan.get("expected_duration"),
         "fps": fps,
         "ratio": ratio,
@@ -562,22 +636,175 @@ def render_plan_mp4(plan: dict, out_mp4: Path) -> Path:
             {
                 "src_s": round(s["a"] / fps, 4),
                 "src_e": round((s["a"] + s["n"]) / fps, 4),
-                "tl_start": s["tl_start"],
+                "tl_start": round(s["tl_start"] + shift, 4),
                 "kind": s["kind"],
                 "zoom": s["zoom"],
             }
             for s in segs
         ],
-        "sfx": [{"name": e.get("name"), "tl_start": e["tl_start"], "volume": e["volume"]} for e in sfx],
+        "sfx": [
+            {"name": e.get("name"), "tl_start": round(float(e["tl_start"]) + shift, 3), "volume": e["volume"]}
+            for e in sfx
+        ],
         "loudness_passes": measured,
         "gain_staging": staging,
         "draft": plan.get("draft"),
     }
+    if any(v != "off" and v for v in (eff["zoom"], eff["enhance_speech"], eff["brand_kit"])) or eff["remove_fillers"]:
+        sidecar["effects"] = {
+            "zoom": eff["zoom"],
+            "zoom_events": {k: (zp or {}).get(k, []) for k in ("main", "overlay")},
+            "zoom_notes": (zp or {}).get("notes", []),
+            "enhance_speech": eff["enhance_speech"],
+            "remove_fillers": eff["remove_fillers"],
+            "fillers_removed": len(plan.get("fillers_removed") or []),
+            "brand": brand_info,
+        }
     out_mp4.with_name(f"{out_mp4.stem}.timeline.json").write_text(
         json.dumps(sidecar, indent=2, ensure_ascii=False), encoding="utf-8"
     )
     print(f"MP4 -> {fwd(out_mp4)}")
     return out_mp4
+
+
+def _brand_faces(plan: dict, lay: dict, total: float, stacked: bool) -> list:
+    """Face boxes (canvas px, padded 4% of the width) on 4 frames across the clip, for the logo/handle corner.
+    Without a face detector the whole cam panel counts as a face."""
+    from streamclipper.effects import _faces_at
+    from streamclipper.faces import get_detector
+
+    rects = lay.get("rects") or {}
+    pn = plan["panels"]
+    panels = [(pn["main_src"], rects.get("main"))]
+    if stacked:
+        panels.append((pn["overlay_src"], rects.get("cam")))
+    det = get_detector()
+    pad = 0.04 * lay["canvas"][0]
+    out = []
+    for path, rect in panels:
+        if not rect:
+            continue
+        rx, ry, rw, rh = rect
+        if det is None:
+            if path == pn.get("overlay_src"):
+                out.append([rx, ry, rx + rw, ry + rh])
+            continue
+        times = [tl_to_src(plan, total * (i + 0.5) / 4) for i in range(4)]
+        for b in _faces_at(det, Path(path), times):
+            out.append([rx + b[0] * rw - pad, ry + b[1] * rh - pad, rx + b[2] * rw + pad, ry + b[3] * rh + pad])
+    return out
+
+
+def _write_ass(path: Path, W: int, H: int, font: str, size: int, events: list) -> None:
+    """A small ASS file (one style 'B': white, black outline) for the brand handle and the card texts."""
+    path.write_text(
+        "\n".join(
+            [
+                "[Script Info]",
+                "ScriptType: v4.00+",
+                f"PlayResX: {W}",
+                f"PlayResY: {H}",
+                "WrapStyle: 0",
+                "ScaledBorderAndShadow: yes",
+                "YCbCr Matrix: TV.709",
+                "",
+                "[V4+ Styles]",
+                "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
+                "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, "
+                "Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+                f"Style: B,{font},{size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H96000000,"
+                f"-1,0,0,0,100,100,0,0,1,{max(3, size // 14)},2,5,80,80,40,1",
+                "",
+                "[Events]",
+                "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+                *events,
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def _brand_graph(
+    g: list,
+    kit: dict,
+    plan: dict,
+    lay: dict,
+    cap_info: dict,
+    total: float,
+    cards: tuple,
+    rdir: Path,
+    idx0: int,
+    stacked: bool,
+) -> tuple:
+    """
+    Video tail with a brand kit: captions, the handle (brand.ass), the logo overlay and the intro/outro cards
+    (image or a colour card, text from an ASS file, silent audio) concatenated around the clip. Appends to g
+    (ending in [vout] / [aout]); returns (sidecar info, extra ffmpeg inputs).
+    """
+    W, H = lay["canvas"]
+    fps = RENDER_FPS
+    avoid = [[s[2], s[3], s[4], s[5]] for s in cap_info.get("spans") or []]
+    faces = _brand_faces(plan, lay, total, stacked)
+    place = plan_brand(kit, W, H, avoid + faces)
+    for n in place["notes"]:
+        print(f"Brand kit: {n}")
+    font = cap_info.get("cap_font") or "Arial"
+    inputs, idx = [], idx0
+    chain = "[stk]ass=clip.ass:fontsdir=../_fonts"
+    if place["handle"]:
+        x0, y0, x1, y1 = place["handle"]["box"]
+        right = place["handle"]["corner"].endswith("right")
+        pos = f"\\an{6 if right else 4}\\pos({x1 if right else x0},{(y0 + y1) // 2})"
+        ev = f"Dialogue: 5,{_ass_time(0)},{_ass_time(total)},B,,0,0,0,,{{{pos}}}{_ass_escape(kit['handle'])}"
+        _write_ass(rdir / "brand.ass", W, H, font, HANDLE_SIZE, [ev])
+        chain += ",ass=brand.ass:fontsdir=../_fonts"
+    vlab = "[vbody]" if any(cards) else "[vout]"
+    if place["logo"]:
+        x0, y0, x1, y1 = place["logo"]["box"]
+        inputs += ["-i", str(kit["logo"]["image"])]
+        g.append(chain + "[vb0]")
+        g.append(
+            f"[{idx}:v]scale={x1 - x0}:{y1 - y0},format=rgba,colorchannelmixer=aa={kit['logo']['opacity']:.2f}[lg]"
+        )
+        g.append(f"[vb0][lg]overlay={x0}:{y0}:format=auto,format=yuv420p{vlab}")
+        idx += 1
+    else:
+        g.append(chain + f",format=yuv420p{vlab}")
+    card_info = {}
+    for which, n in (("intro", cards[0]), ("outro", cards[1])):
+        card = kit.get(which)
+        if not n or not card:
+            continue
+        secs = n / fps
+        if card["image"]:
+            inputs += ["-loop", "1", "-framerate", str(fps), "-t", f"{secs + 0.2:.3f}", "-i", card["image"]]
+            src = f"[{idx}:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1,fps={fps}"
+            idx += 1
+        else:
+            hx = (kit["colours"].get("hook_box") or "#FFE600")[1:]
+            src = f"color=c=0x{hx}:s={W}x{H}:r={fps}:d={secs + 0.2:.3f},setsar=1"
+        if card["text"]:
+            text = _ass_escape(card["text"])
+            ev = f"Dialogue: 0,{_ass_time(0)},{_ass_time(secs + 0.2)},B,,0,0,0,,{{\\an5\\pos({W // 2},{H // 2})}}{text}"
+            _write_ass(rdir / f"{which}.ass", W, H, font, 92 if H > W else 80, [ev])
+            src += f",ass={which}.ass:fontsdir=../_fonts"
+        g.append(f"{src},format=yuv420p,trim=end_frame={n},setpts=PTS-STARTPTS[{which}v]")
+        g.append(f"anullsrc=r=48000:cl=stereo,atrim=end_sample={n * 48000 // fps},asetpts=PTS-STARTPTS[{which}a]")
+        card_info[which] = round(secs, 3)
+    if any(cards):
+        order = (["intro"] if "intro" in card_info else []) + ["body"] + (["outro"] if "outro" in card_info else [])
+        cat = "".join("[vbody][abody]" if k == "body" else f"[{k}v][{k}a]" for k in order)
+        g.append(f"{cat}concat=n={len(order)}:v=1:a=1[vout][aout]")
+    info = {
+        "kit": kit["path"],
+        "logo": place["logo"],
+        "handle": place["handle"],
+        "cards": card_info,
+        "notes": place["notes"],
+        "font": cap_info.get("cap_font"),
+    }
+    return info, inputs
 
 
 def tl_to_src(plan: dict, t: float) -> float:

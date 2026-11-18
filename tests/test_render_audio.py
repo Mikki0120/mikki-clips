@@ -1,3 +1,8 @@
+import shutil
+import subprocess
+
+import pytest
+
 from streamclipper.render import (
     COMP_STAGES,
     MAX_LIMITING_DB,
@@ -56,3 +61,48 @@ def test_sustained_limiting_aligns_logs_that_differ_by_a_frame():
     pre = [-20.0] * 10 + [-6.0] * 10 + [-20.0] * 10
     post = [-120.0] + [-20.0] * 10 + [-9.0] * 10 + [-20.0] * 10 + [-150.0]  # one frame late, odd edges
     assert sustained_limiting(pre, post) == 3.0
+
+
+def test_speech_enhancement_only_when_enabled():
+    from streamclipper.render import RNNOISE_MODEL, _audio_graph, enhance_mix
+
+    assert enhance_mix("off") is None and enhance_mix(None) is None
+    assert enhance_mix("light") == 0.6 and enhance_mix("strong") == 0.9
+    assert RNNOISE_MODEL.is_file() and RNNOISE_MODEL.read_bytes().startswith(b"rnnoise-nu model file")
+    lanes = [{"a0": 0, "end": 60, "idx": [0]}]
+    segs = [{"a": 0, "n": 60, "fade_ms": 0}]
+    plain = _audio_graph(lanes, segs, {0: 0}, True, [], 1)[0]
+    enh = _audio_graph(lanes, segs, {0: 0}, True, [], 1, 0.6)[0]
+    assert "arnndn" not in "".join(plain)
+    assert plain[0] == "[0:a]aformat=sample_rates=48000:channel_layouts=stereo,apad=pad_dur=0.5,asplit=1[as0]"
+    text = ";".join(enh)
+    # fully wet arnndn + the dry signal delayed by the same 10 ms (arnndn's own mix would comb), then re-synced
+    assert "arnndn=m=../_models/bd.rnnn:mix=1" in text and "adelay=delays=480S|480S" in text
+    assert "weights='0.6 0.4'" in text and "atrim=start_sample=480" in text and text.endswith(plain[-1].split(";")[-1])
+
+
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
+def test_enhanced_audio_stays_in_sync_and_runs_with_the_bundled_model(tmp_path):
+    import numpy as np
+
+    from streamclipper.render import RNNOISE_MODEL, enhance_lines
+
+    (tmp_path / "_models").mkdir()
+    shutil.copy2(RNNOISE_MODEL, tmp_path / "_models" / RNNOISE_MODEL.name)
+    work = tmp_path / "clip"
+    work.mkdir()
+    lines, head = enhance_lines("[0:a]aformat=sample_rates=48000:channel_layouts=mono,", 0.6, "t")
+    graph = ";".join(lines + [f"{head}anull[out]"])
+    # a click every 0.5 s in noise: after enhancement the clicks must still sit at the same samples
+    src = "aevalsrc='if(lt(mod(n,24000),48),0.8,0)+0.02*random(0)':s=48000:d=3"
+    r = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-v", "error", "-f", "lavfi", "-i", src, "-filter_complex", graph]
+        + ["-map", "[out]", "-ac", "1", "-f", "f32le", "-"],
+        cwd=work,
+        capture_output=True,
+    )
+    assert r.returncode == 0, r.stderr.decode(errors="replace")
+    y = np.frombuffer(r.stdout, np.float32)
+    assert abs(len(y) - 3 * 48000) <= 480
+    peak = int(np.argmax(np.abs(y[20000:30000]))) + 20000
+    assert abs(peak - 24000) <= 48, peak  # within 1 ms of the original click

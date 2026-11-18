@@ -3,8 +3,10 @@
 import os
 from pathlib import Path
 
+from streamclipper.brand import load_brand_kit
 from streamclipper.captions.capcut import build_word_synced_captions, hook_capcut_fields
 from streamclipper.captions.styles import DEFAULT_HOOK_STYLE, clip_style, get_style
+from streamclipper.effects import any_on, check_effects, effects_of
 from streamclipper.layout import _norm_to_px, capcut_y, caption_anchor, layout_boxes
 from streamclipper.story import _inside_word, grid_off_word, off_word
 from streamclipper.util import DRAFT_FPS, file_tag, fwd, run_cmd
@@ -37,6 +39,7 @@ def plan_clip_spec(
     at most every 3 s.
     """
     fps = DRAFT_FPS
+    kit = opts.get("brand") or {}
     style = {k: v for k, v in (style or {}).items() if v not in (None, "")}
     hook_mode = opts["hook_mode"]
     segs = list(segs)
@@ -107,6 +110,7 @@ def plan_clip_spec(
             jump_cut = (
                 prev is not None and not is_tease and not prev["tease"] and abs(s["cut_start"] - prev["cut_end"]) > 0.02
             )
+            jump_cut = jump_cut and not s.get("after_filler")  # a filler cut should go unnoticed: no pop
             if jump_cut and tl_cursor - last_pop >= 3.0 and "pop" in sfx:
                 sfx_events.append(
                     {"source": sfx["pop"], "tl_start": round(max(0.0, tl_cursor - 0.03), 3), "volume": 0.25}
@@ -159,7 +163,7 @@ def plan_clip_spec(
                 emoji=opts.get("emoji"),
                 profanity=bool(opts.get("profanity_filter")),
                 highlight=opts.get("highlight_color") or "",
-                font=opts.get("caption_font") or "",
+                font=kit.get("font") or opts.get("caption_font") or "",
             )
             for c in word_caps:
                 for k in ("glow_preset", "glow_color", "anim"):
@@ -202,6 +206,23 @@ def plan_clip_spec(
             )
             t += d
 
+    if kit.get("handle") and tl_cursor > 0:
+        # the MP4 places the handle in a free corner (render.py); in CapCut it starts top-left and can be moved
+        captions.append(
+            {
+                "text": kit["handle"],
+                "tl_start": 0.0,
+                "tl_end": round(tl_cursor, 3),
+                "layer": 2,
+                "font_size": 5.5,
+                "pos_x": -0.62,
+                "pos_y": 0.82 if opts["ratio"] == "9:16" else 0.86,
+                "glow": False,
+                "anim": "none",
+                "auto_highlight": False,
+                "capcut_only": True,
+            }
+        )
     return {
         "project_name": proj_name,
         "draft_root": draft_root or "",
@@ -215,7 +236,7 @@ def plan_clip_spec(
         "caption_style": {
             "name": cstyle.name,
             "hook_style": hook_style,
-            "font": opts.get("caption_font") or cstyle.font,
+            "font": kit.get("font") or opts.get("caption_font") or cstyle.font,
             "font_size": float(style.get("font_size", 11.0)),
             "pos_y": caption_y,
             "stroke_width": 0.07,
@@ -452,7 +473,30 @@ def make_clip_plan(
         ],
         "expected_duration": spec["expected_duration"],
         "timeline_spec": fwd(spec_path),
+        # plans without effects render exactly as before 5.3 (the key is only written when one is on)
+        **({"effects": dict(opts["effects"])} if any_on(opts.get("effects")) else {}),
     }
+
+
+def with_effects(plan: dict, args) -> dict:
+    """A copy of a clip plan with the effect flags of `render --spec` applied (zoom, enhance_speech, brand_kit).
+    Filler removal changes the cuts, so it needs the clip to be rebuilt (clip-stream/build) and is ignored here."""
+    raw = dict(plan.get("effects") or {})
+    for k in ("zoom", "enhance_speech"):
+        if getattr(args, k, None):
+            raw[k] = getattr(args, k)
+    if getattr(args, "brand_kit", None):
+        kit = load_brand_kit(args.brand_kit)
+        raw["brand_kit"], raw["brand_sha1"] = kit["path"], kit["sha1"]
+    if getattr(args, "remove_fillers", None) and not raw.get("remove_fillers"):
+        print("NOTE: --remove-fillers needs the clip to be rebuilt (clip-stream or build); the cuts stay as they are.")
+    eff = check_effects(raw)
+    if eff == effects_of(plan):
+        return plan
+    out = dict(plan, effects=eff)
+    if eff["zoom"] != effects_of(plan)["zoom"]:
+        out.pop("zoom_plan", None)
+    return out
 
 
 def restyle_plan(plan: dict, caption_style: str = "", hook_style: str = "") -> dict:

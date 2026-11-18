@@ -18,6 +18,8 @@ from pathlib import Path
 
 from streamclipper.captions.styles import AUTO_STYLE, HOOK_STYLES, STYLES
 from streamclipper.colab import _clip_argv
+from streamclipper.effects import ENHANCE_MIX, ZOOM_LEVELS
+from streamclipper.hud.analyze import HUD_MODES
 from streamclipper.llm import PROVIDERS
 from streamclipper.paths import PRESET_DIR
 from streamclipper.state import write_json_atomic
@@ -97,14 +99,21 @@ def validate_options(raw: dict) -> dict:
         "drafts": parse_bool(raw.get("drafts"), "drafts", False),
         "stop_after": _num(raw.get("stop_after"), 0.0, 1440.0, 60.0),
         "max_clips_per_hour": _num(raw.get("max_clips_per_hour"), 1, 60, 12, int),
+        # 5.3 effects (off by default) and the game HUD signal
+        "zoom": _choice(raw.get("zoom"), list(ZOOM_LEVELS), "zoom", "off"),
+        "remove_fillers": parse_bool(raw.get("remove_fillers"), "remove_fillers", False),
+        "enhance_speech": _choice(raw.get("enhance_speech"), list(ENHANCE_MIX), "speech enhancement", "off"),
+        "brand_kit": parse_bool(raw.get("brand_kit"), "brand_kit", False),
+        "hud": _choice(raw.get("hud"), list(HUD_MODES), "HUD mode", "auto"),
     }
     if mode == "podcast":
         o["preset"] = "podcast-9x16"
     return o
 
 
-def build_vod_argv(source: str, opts: dict, job_dir: Path) -> list:
-    """clip-stream argv (the Colab mapping); drafts go to <job>/capcut_drafts as portable drafts."""
+def build_vod_argv(source: str, opts: dict, job_dir: Path, brand_kit: Path = None) -> list:
+    """clip-stream argv (the Colab mapping); drafts go to <job>/capcut_drafts as portable drafts.
+    brand_kit: the workspace's brand kit JSON, used when opts['brand_kit'] is on."""
     job_dir = Path(job_dir)
     droot = job_dir / "capcut_drafts"
     if opts["drafts"]:
@@ -127,6 +136,11 @@ def build_vod_argv(source: str, opts: dict, job_dir: Path) -> list:
         "drafts": opts["drafts"],
         "draft_root": droot,
         "resume": True,
+        "zoom": opts.get("zoom") or "off",
+        "remove_fillers": bool(opts.get("remove_fillers")),
+        "enhance_speech": opts.get("enhance_speech") or "off",
+        "brand_kit": str(brand_kit) if opts.get("brand_kit") and brand_kit else "",
+        "hud": opts.get("hud") or "auto",
     }
     return _clip_argv(source, job_dir / "out", o)
 

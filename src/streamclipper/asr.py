@@ -430,6 +430,62 @@ def merge_rescued(words: list, heard: list, min_prob: float = RESCUE_MIN_PROB, p
     return out, added
 
 
+# Whisper leaves 'um'/'uh' out of its transcripts unless the prompt itself is disfluent (a known Whisper habit).
+FILLER_PROMPT = "Umm, so, uh, I was like, you know, hmm... Uh, okay. Um, erm, yeah."
+FILLER_MIN_PROB = 0.3  # fillers are short and quiet: Whisper gives them lower probabilities than words
+
+
+def filler_pass(source: Path, a: float, b: float, words: list, asr: dict, cache_dir: Path) -> tuple:
+    """
+    --remove-fillers: one Whisper pass over the clip window [a, b] of `source` with a disfluent prompt, so the
+    um/uh the normal pass leaves out are transcribed. Only filler tokens (fillers.FILLER_WORDS) are merged into
+    words (source seconds) by merge_rescued (never over a known word). Cached per window. Returns
+    (words, number added, seconds taken).
+    """
+    from streamclipper.fillers import FILLER_WORDS, _norm
+
+    lang = asr.get("language")
+    lang = None if not lang or lang == "auto" else lang
+    model_name = asr.get("model") or "auto"
+    tag = file_tag(source, round(a, 2), round(b, 2), model_name, lang, "fillers1")
+    cache = Path(cache_dir) / f"asr_fillers_{tag}.json"
+    t0 = time.time()
+    if cache.is_file():
+        heard = json.loads(cache.read_text(encoding="utf-8"))["words"]
+    else:
+        key = (asr.get("device") or "auto", model_name)
+        if key not in _RESCUE_MODELS:
+            _RESCUE_MODELS[key] = load_model(key[0], float(asr.get("duration") or 0.0), model_name)
+        w = _RESCUE_MODELS[key]
+        Path(cache_dir).mkdir(parents=True, exist_ok=True)
+        wav = _extract_wav(Path(source), a, b, Path(cache_dir) / f"asr_fillers_{tag}.wav")
+        try:
+            segs, _ = w.model.transcribe(
+                read_wav16k(wav),
+                word_timestamps=True,
+                vad_filter=False,
+                condition_on_previous_text=False,
+                initial_prompt=FILLER_PROMPT,
+                language=lang,
+            )
+            heard = [
+                {
+                    "w": x.word.strip(),
+                    "s": round(a + x.start, 3),
+                    "e": round(a + x.end, 3),
+                    "p": round(x.probability, 3),
+                }
+                for s in segs
+                for x in s.words or []
+                if _norm(x.word) in FILLER_WORDS
+            ]
+        finally:
+            wav.unlink(missing_ok=True)
+        write_json_atomic(cache, {"words": heard})
+    merged, added = merge_rescued(words, heard, min_prob=FILLER_MIN_PROB)
+    return merged, added, round(time.time() - t0, 2)
+
+
 def rescue_words(source: Path, a: float, b: float, words: list, asr: dict, cache_dir: Path) -> tuple:
     """
     Second pass over one clip window [a, b] (seconds in `source`): Whisper without its VAD filter, which drops

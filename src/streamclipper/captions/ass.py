@@ -136,8 +136,13 @@ class _Fonts:
         self.emoji = full("emoji") if (Path(fonts_dir) / FONT_FILES["emoji"]).is_file() else ""
 
 
-def build_ass(plan: dict, lay: dict, out_path: Path, fonts_dir: Path) -> dict:
-    """Write the ASS subtitle file for a ClipPlan; returns caption facts for the timeline sidecar."""
+def build_ass(plan: dict, lay: dict, out_path: Path, fonts_dir: Path, brand: dict = None) -> dict:
+    """
+    Write the ASS subtitle file for a ClipPlan; returns caption facts for the timeline sidecar.
+    brand (a brand kit, render.py): {font: full font name, hook_box: '#RRGGBB'} for the caption font and the
+    hook box / top bar colour.
+    """
+    brand = brand or {}
     from streamclipper.layout import caption_anchor
 
     W, H = lay["canvas"]
@@ -161,6 +166,11 @@ def build_ass(plan: dict, lay: dict, out_path: Path, fonts_dir: Path) -> dict:
         (hooks if is_hook else words).append(c)
     hook_end = max([c["tl_end"] for c in hooks], default=0.0)
     fonts = _Fonts(fonts_dir, st, plan, words, hooks)
+    if brand.get("font") and not any(_has_devanagari(c.get("text")) for c in words):
+        fonts.cap = brand["font"]
+    box_hex = brand.get("hook_box") or ""
+    hook_box_col = _hex_col(box_hex) if box_hex else _style_col("yellow")
+    bar_col = _hex_col(box_hex) if box_hex else _style_col("red")
     cap_size = round(st.size * k)
     hook_size = round((80 if hstyle == "top-bar" else 96) * k)
     X = W // 2
@@ -272,8 +282,8 @@ def build_ass(plan: dict, lay: dict, out_path: Path, fonts_dir: Path) -> dict:
             f"Style: Hook,{fonts.hook},{hook_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H96000000,"
             "-1,0,0,0,100,100,0,0,1,7,3,8,40,40,40,1",
             f"Style: HookBox,{fonts.hook},{hook_size},{_style_col('black')},{_style_col('black')},"
-            f"{_style_col('yellow')},&H00000000,-1,0,0,0,100,100,0,0,3,18,0,8,40,40,40,1",
-            f"Style: Bar,{fonts.hook},{hook_size},{_style_col('red')},{_style_col('red')},&H00000000,&H00000000,"
+            f"{hook_box_col},&H00000000,-1,0,0,0,100,100,0,0,3,18,0,8,40,40,40,1",
+            f"Style: Bar,{fonts.hook},{hook_size},{bar_col},{bar_col},&H00000000,&H00000000,"
             "0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1",
             "",
             "[Events]",
@@ -297,6 +307,11 @@ def build_ass(plan: dict, lay: dict, out_path: Path, fonts_dir: Path) -> dict:
         "spans": spans,
         "texts": texts,
     }
+
+
+def _hex_col(hex_col: str, alpha: str = "00") -> str:
+    """#RRGGBB -> ASS style colour &HAABBGGRR."""
+    return f"&H{alpha}{hex_col[5:7]}{hex_col[3:5]}{hex_col[1:3]}".upper()
 
 
 def _word(w: str, col: str) -> str:

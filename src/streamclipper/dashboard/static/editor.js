@@ -81,6 +81,10 @@ async function pageEdit(root, jobId, key) {
       }
     }
     f.caption_anchor = f.caption_anchor || null;
+    f.zoom = f.zoom || "off";
+    f.enhance_speech = f.enhance_speech || "off";
+    f.remove_fillers = !!f.remove_fillers;
+    f.brand_kit = !!f.brand_kit;
     return f;
   }
   const segs = () => form.segments;
@@ -1070,6 +1074,38 @@ async function pageEdit(root, jobId, key) {
   const titleIn = h("input", { type: "text", maxLength: 100, id: "ed-title" });
   const descIn = h("textarea", { maxLength: 500, id: "ed-desc" });
   const tagsIn = h("input", { type: "text", id: "ed-tags", placeholder: "#gaming #clips" });
+  // effects (5.3): punch-in zoom, speech enhancement, filler removal, brand kit
+  const EC = ctx.effect_choices || { zoom: ["off"], enhance_speech: ["off"] };
+  const zoomLabels = { off: "Off", light: "Light (1.08x)", medium: "Medium (1.12x)", strong: "Strong (1.2x)" };
+  const enhLabels = { off: "Off", light: "Light (keeps more game sound)", strong: "Strong" };
+  const zoomSel = sel(EC.zoom.map((z) => [z, zoomLabels[z] || z]), "off", { id: "ed-zoom" });
+  const enhSel = sel(EC.enhance_speech.map((z) => [z, enhLabels[z] || z]), "off", { id: "ed-enhance" });
+  const fxToggle = (id, label, disabled) => {
+    const c = h("input", { type: "checkbox", id, role: "switch", disabled: !!disabled });
+    return [c, h("label", { class: "switch" }, c, h("span", { class: "switch-ui", "aria-hidden": "true" }), label)];
+  };
+  const [fillChk, fillLbl] = fxToggle("ed-fillers", "Remove filler words (um, uh)");
+  const [brandChk, brandLbl] = fxToggle("ed-brand", "Brand kit", !ctx.brand_kit_ready);
+  for (const [elx, k] of [[zoomSel, "zoom"], [enhSel, "enhance_speech"]]) {
+    elx.addEventListener("change", () => {
+      push();
+      form[k] = elx.value;
+    });
+  }
+  for (const [elx, k] of [[fillChk, "remove_fillers"], [brandChk, "brand_kit"]]) {
+    elx.addEventListener("change", () => {
+      push();
+      form[k] = elx.checked;
+    });
+  }
+  const fxCard = h(
+    "div",
+    { class: "card stack", id: "ed-effects" },
+    h("h2", { text: "Effects" }),
+    h("div", { class: "grid2" }, field("Punch-in zoom", zoomSel, "On the payoff and hype words; faces stay in view"), field("Speech enhancement", enhSel, "Less background noise")),
+    h("div", { class: "row" }, fillLbl, brandLbl),
+    h("p", { class: "hint", text: ctx.brand_kit_ready ? "The brand kit comes from Settings. An intro card delays the hook, so keep it short. The preview does not show effects; Render does." : "Set up a brand kit in Settings to use it here. The preview does not show effects; Render does." })
+  );
   // text fields: one undo step per focus, taken on the first change
   const once = (elx) => {
     let armed = true;
@@ -1137,6 +1173,10 @@ async function pageEdit(root, jobId, key) {
     titleIn.value = form.title || "";
     descIn.value = form.description || "";
     tagsIn.value = (form.hashtags || []).join(" ");
+    zoomSel.value = form.zoom || "off";
+    enhSel.value = form.enhance_speech || "off";
+    fillChk.checked = !!form.remove_fillers;
+    brandChk.checked = !!form.brand_kit && !!ctx.brand_kit_ready;
     wordInputs.forEach((inp, i) => {
       inp.value = form.words[i];
       inp.classList.toggle("changed", form.words[i] !== ctx.words[i].w);
@@ -1330,6 +1370,7 @@ async function pageEdit(root, jobId, key) {
         { class: "stack" },
         h("div", { class: "card stack" }, h("h2", { text: "Caption style" }), capPick, h("div", { class: "grid2" }, field("Caption position", posSel), field("Highlight colour", hlSel))),
         h("div", { class: "card stack" }, h("h2", { text: "Hook" }), field("Hook headline", hookIn), hookPick),
+        fxCard,
         h("div", { class: "card stack" }, h("h2", { text: "Post text" }), field("Title", titleIn), field("Description", descIn), field("Hashtags", tagsIn)),
         h("div", { class: "card stack" }, status)
       )

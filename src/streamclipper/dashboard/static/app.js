@@ -747,9 +747,127 @@ function looksLive(src) {
   return false;
 }
 
+const ZOOM_OPTS = [
+  ["off", "Off"],
+  ["light", "Light (1.08x)"],
+  ["medium", "Medium (1.12x)"],
+  ["strong", "Strong (1.2x)"],
+];
+const ENHANCE_OPTS = [
+  ["off", "Off"],
+  ["light", "Light (keeps more game sound)"],
+  ["strong", "Strong"],
+];
+
+function uploadBrand(file) {
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open("PUT", "/api/brand/upload?name=" + enc(file.name));
+    x.setRequestHeader("X-CSRF-Token", CSRF);
+    x.onload = () => {
+      let d = {};
+      try {
+        d = JSON.parse(x.responseText);
+      } catch (e) {
+        d = {};
+      }
+      if (x.status >= 200 && x.status < 300) resolve(d);
+      else reject(Object.assign(new Error(d.error || `Upload failed (HTTP ${x.status})`), { hint: d.hint }));
+    };
+    x.onerror = () => reject(new Error("Upload failed: the connection was lost."));
+    x.send(file);
+  });
+}
+
+// Settings > Brand kit: files are uploaded into <workspace>/brand/, the server checks and writes brand_kit.json
+async function brandCard(box) {
+  let b;
+  try {
+    b = await api("GET", "/api/brand");
+  } catch (e) {
+    box.replaceChildren(errorBox(e));
+    return;
+  }
+  const k = b.kit || {};
+  const ro = b.read_only;
+  const none = ["", "None"];
+  const imgOpts = () => [none, ...b.files.images.map((n) => [n, n])];
+  const fontOpts = () => [["", "The caption style's font"], ...b.files.fonts.map((n) => [n, n])];
+  const logo = k.logo || {}, intro = k.intro || {}, outro = k.outro || {}, cols = k.colours || {};
+  const logoSel = sel(imgOpts(), logo.image || "", { id: "br-logo" });
+  const posSel = sel(["auto", "top-left", "top-right", "bottom-left", "bottom-right"], logo.position || "auto", { id: "br-pos" });
+  const widthIn = h("input", { type: "number", min: "5", max: "25", step: "1", value: String(logo.width_pct || 12), id: "br-width" });
+  const opIn = h("input", { type: "number", min: "0.2", max: "1", step: "0.05", value: String(logo.opacity || 0.85), id: "br-opacity" });
+  const handleIn = h("input", { type: "text", maxLength: 30, value: k.handle || "", placeholder: "@yourname", id: "br-handle" });
+  const fontSel = sel(fontOpts(), k.font || "", { id: "br-font" });
+  const hlIn = h("input", { type: "text", maxLength: 7, value: cols.highlight || "", placeholder: "#FFE600", id: "br-hl" });
+  const boxIn = h("input", { type: "text", maxLength: 7, value: cols.hook_box || "", placeholder: "#FFE600", id: "br-box" });
+  const card = (c, id) => ({
+    img: sel(imgOpts(), c.image || "", { id: `br-${id}-img` }),
+    text: h("input", { type: "text", maxLength: 60, value: c.text || "", id: `br-${id}-text` }),
+    secs: h("input", { type: "number", min: "0.5", max: "1.5", step: "0.1", value: String(c.seconds || 1.0), id: `br-${id}-secs` }),
+  });
+  const ci = card(intro, "intro"), co = card(outro, "outro");
+  const fileIn = h("input", { type: "file", accept: ".png,.jpg,.jpeg,.ttf,.otf", hidden: true, id: "br-file" });
+  const bUp = h("button", { class: "btn", type: "button", id: "br-upload", onclick: () => fileIn.click() }, icon("upload", 16), "Upload image or font");
+  fileIn.addEventListener("change", async () => {
+    const f = fileIn.files[0];
+    if (!f) return;
+    bUp.disabled = true;
+    try {
+      await uploadBrand(f);
+      toast(`Uploaded ${f.name}.`, "ok");
+      brandCard(box);
+    } catch (e) {
+      fail(e);
+    } finally {
+      bUp.disabled = false;
+    }
+  });
+  const bSave = h("button", { class: "btn primary", type: "button", id: "br-save" }, "Save brand kit");
+  const bClear = h("button", { class: "btn ghost", type: "button", id: "br-clear" }, "Remove brand kit");
+  const cardBody = (c) => ({ image: c.img.value, text: c.text.value, seconds: Number(c.secs.value) });
+  bSave.addEventListener("click", async () => {
+    bSave.disabled = true;
+    try {
+      const body = { logo: logoSel.value ? { image: logoSel.value, position: posSel.value, width_pct: Number(widthIn.value), opacity: Number(opIn.value) } : null, handle: handleIn.value, font: fontSel.value, colours: { highlight: hlIn.value.trim(), hook_box: boxIn.value.trim() }, intro: cardBody(ci), outro: cardBody(co) };
+      const r = await api("POST", "/api/brand", body);
+      toast(r.message, "ok");
+      OPTS = null;
+    } catch (e) {
+      fail(e);
+    } finally {
+      bSave.disabled = false;
+    }
+  });
+  bClear.addEventListener("click", async () => {
+    if (!(await confirmModal("Remove the brand kit?", "The uploaded files stay in the brand folder.", "Remove"))) return;
+    try {
+      const r = await api("POST", "/api/brand", { clear: true });
+      toast(r.message, "ok");
+      OPTS = null;
+      brandCard(box);
+    } catch (e) {
+      fail(e);
+    }
+  });
+  const kids = [
+    b.error ? h("p", { class: "err", text: "The saved brand kit does not load: " + b.error }) : null,
+    h("div", { class: "grid3" }, field("Logo or watermark", logoSel), field("Logo corner", posSel, "Auto picks a corner clear of captions, faces and the app's buttons"), field("Logo width (% of the video)", widthIn)),
+    h("div", { class: "grid3" }, field("Logo opacity (0.2-1)", opIn), field("Handle", handleIn, "Shown small in a free corner"), field("Caption font", fontSel)),
+    h("div", { class: "grid3" }, field("Highlight colour", hlIn, "Nearest caption colour is used"), field("Hook box colour", boxIn)),
+    h("div", { class: "grid3" }, field("Intro image", ci.img), field("Intro text", ci.text), field("Intro seconds", ci.secs)),
+    h("div", { class: "grid3" }, field("Outro image", co.img), field("Outro text", co.text), field("Outro seconds", co.secs)),
+    h("p", { class: "hint warn-hint", id: "br-intro-warn" }, icon("info", 14), " An intro card delays the hook, and the first 2 seconds decide if people keep watching. Leave it empty or keep it at most 1.5 s. Logo and cards are in the MP4 only; CapCut drafts get the handle, font and colours."),
+    ro ? h("p", { class: "muted", text: "Network mode: the brand kit can be changed only on this PC." }) : h("div", { class: "row tight" }, bSave, bUp, b.kit ? bClear : null, fileIn),
+  ];
+  box.replaceChildren(...kids);
+  if (ro) box.querySelectorAll("input, select").forEach((x) => (x.disabled = true));
+}
+
 async function pageHome(root) {
   const d = OPTS.defaults || {};
-  const st = { mode: "auto", preset: d.preset || "", ratio: "9:16", min_score: 50, max_clips: 3, llm: "none", render: true, drafts: false, upload: "", uploading: false };
+  const st = { mode: "auto", preset: d.preset || "", ratio: "9:16", min_score: 50, max_clips: 3, llm: "none", render: true, drafts: false, upload: "", uploading: false, zoom: "off", enhance_speech: "off", remove_fillers: false, brand_kit: false };
   const narrow = window.matchMedia("(max-width: 640px)");
   const srcIn = h("input", { type: "text", id: "src-url", class: "hero-input", placeholder: narrow.matches ? "Paste a link or drop a video" : "Paste a stream link or drop a video", autocomplete: "off", spellcheck: "false", "aria-label": "Stream link or video" });
   const fileIn = h("input", { type: "file", id: "src-file", accept: "video/*,.mkv,.ts,.flv,.m4v", hidden: true });
@@ -842,6 +960,18 @@ async function pageHome(root) {
     return h("label", { class: "switch" }, c, h("span", { class: "switch-ui", "aria-hidden": "true" }), label);
   };
   const capName = d.caption_style || "auto", hookName = d.hook_style || "bold-box";
+  const zoomSel = sel(ZOOM_OPTS, st.zoom, { id: "adv-zoom", onchange: (e) => (st.zoom = e.target.value) });
+  const enhSel = sel(ENHANCE_OPTS, st.enhance_speech, { id: "adv-enhance", onchange: (e) => (st.enhance_speech = e.target.value) });
+  const brandTg = toggle("brand_kit", "Brand kit", "adv-brand");
+  if (!OPTS.brand_kit) brandTg.querySelector("input").disabled = true;
+  const effects = h(
+    "div",
+    { class: "adv-effects stack", id: "adv-effects" },
+    h("h3", { class: "adv-sub", text: "Editing effects" }),
+    h("div", { class: "grid3" }, field("Punch-in zoom", zoomSel, "Zooms in on the payoff and hype words; faces stay in view"), field("Speech enhancement", enhSel, "Less background noise and some room echo")),
+    h("div", { class: "row" }, toggle("remove_fillers", "Remove filler words (um, uh)", "adv-fillers"), brandTg),
+    h("p", { class: "hint", id: "adv-brand-hint" }, OPTS.brand_kit ? "Brand kit: logo, handle, font and cards from Settings. An intro card delays the hook, so keep it short." : "Brand kit: set it up first in ", OPTS.brand_kit ? null : h("a", { href: "#/settings", text: "Settings" }), OPTS.brand_kit ? null : ".")
+  );
   const drawer = h(
     "div",
     { class: "adv", id: "adv", hidden: true },
@@ -856,7 +986,8 @@ async function pageHome(root) {
       field("AI for titles", llmSel, OPTS.llms.includes("gemini") ? "" : "Set GEMINI_API_KEY before you start the dashboard to use Gemini.")
     ),
     h("div", { class: "row" }, toggle("render", "Render ready-to-post MP4s", "adv-render"), toggle("drafts", "CapCut drafts", "adv-drafts")),
-    h("p", { class: "hint" }, "Captions ", h("strong", { text: capName }), " · Hook ", h("strong", { text: hookName }), " · ", h("a", { href: "#/styles", text: "Change styles" }))
+    h("p", { class: "hint" }, "Captions ", h("strong", { text: capName }), " · Hook ", h("strong", { text: hookName }), " · ", h("a", { href: "#/styles", text: "Change styles" })),
+    effects
   );
   const advBtn = h("button", { class: "btn ghost sm adv-toggle", type: "button", id: "adv-toggle", "aria-expanded": "false", "aria-controls": "adv" }, icon("sliders", 16), "Advanced", icon("chevron-down", 14));
   advBtn.addEventListener("click", () => {
@@ -897,7 +1028,7 @@ async function pageHome(root) {
       return;
     }
     const mode = st.mode === "auto" ? (!st.upload && looksLive(src) ? "live" : "vod") : st.mode;
-    const body = { mode, preset: st.preset, caption_style: capName, hook_style: hookName, ratio: st.ratio, min_score: st.min_score, max_clips: st.max_clips, llm: st.llm, render: st.render, drafts: st.drafts };
+    const body = { mode, preset: st.preset, caption_style: capName, hook_style: hookName, ratio: st.ratio, min_score: st.min_score, max_clips: st.max_clips, llm: st.llm, render: st.render, drafts: st.drafts, zoom: st.zoom, enhance_speech: st.enhance_speech, remove_fillers: st.remove_fillers, brand_kit: st.brand_kit };
     if (mode === "live") Object.assign(body, { stop_after: 60, max_clips_per_hour: 12 });
     if (st.upload) body.upload = st.upload;
     else body.source = src;
@@ -1590,6 +1721,7 @@ async function pageSettings(root) {
     }
   };
   const sharesBox = h("div", { class: "stack" }, skeleton("line", 2));
+  const brandBox = h("div", { class: "stack", id: "brand-kit" }, skeleton("line", 2));
   const doctorBox = h("div");
   const row = (k, v, extra) => h("div", { class: "kv" }, h("span", { class: "k", text: k }), h("span", { class: "v mono", text: v }), extra || null);
   const status = (ok, text) => h("span", { class: "chip " + (ok ? "ok-chip" : "warn-chip") }, icon(ok ? "check" : "info", 12), text);
@@ -1616,6 +1748,7 @@ async function pageSettings(root) {
         row("Ollama", llmOk ? "running" : "not running", status(llmOk, llmOk ? "Available" : "Optional")),
         s.gemini === "set" ? null : h("p", { class: "hint", text: "To use Gemini, set GEMINI_API_KEY before you start the dashboard. The key is never shown here." })
       ),
+      section("palette", "Brand kit", "Logo, handle, font, colours and intro/outro cards. Turn it on per project under Advanced on Home.", brandBox),
       section("share-2", "Share links", s.mode === "lan" ? "Network mode: links work for people on the same Wi-Fi." : "This PC only.", sharesBox),
       section("shield-check", "System check", "Checks Python, ffmpeg, Whisper, the GPU and CapCut.", h("div", {}, bDoc), doctorBox)
     )
@@ -1672,6 +1805,7 @@ async function pageSettings(root) {
       )
     );
   };
+  brandCard(brandBox);
   await loadShares();
 }
 

@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+from streamclipper.brand import load_brand_kit, nearest_colour
 from streamclipper.captions.styles import (
     AUTO_STYLE,
     CAPTION_CASES,
@@ -15,6 +16,7 @@ from streamclipper.captions.styles import (
     STYLES,
     style_name,
 )
+from streamclipper.effects import EFFECT_DEFAULTS, check_effects
 from streamclipper.layout import black_spans, detect_player_and_webcam, gameplay_box_avoiding
 from streamclipper.paths import PRESET_DIR
 from streamclipper.util import SkipClip, ToolError, box_to_norm, parse_box, parse_time
@@ -122,7 +124,29 @@ def resolve_options(args, spec: dict = None) -> dict:
         )
     if opts["filler_video"] and not Path(opts["filler_video"]).is_file():
         raise ToolError(f"Filler video not found: {opts['filler_video']}", "check the --filler-video path")
+    _resolve_effects(opts, args, spec)
     return opts
+
+
+def _resolve_effects(opts: dict, args, spec: dict) -> None:
+    """opts['effects'] (zoom, remove_fillers, enhance_speech, brand_kit; CLI flag > spec > off) and opts['brand']
+    (the loaded brand kit). A brand kit colour sets the highlight colour unless one was chosen."""
+    raw = {}
+    for k in EFFECT_DEFAULTS:
+        if spec.get(k) not in (None, ""):
+            raw[k] = spec[k]
+        cli = getattr(args, k, None)
+        if cli not in (None, ""):
+            raw[k] = str(Path(cli).resolve()) if k == "brand_kit" else cli
+    eff = check_effects(raw)
+    opts["brand"] = None
+    if eff["brand_kit"]:
+        kit = load_brand_kit(eff["brand_kit"])
+        eff["brand_kit"], eff["brand_sha1"] = kit["path"], kit["sha1"]
+        opts["brand"] = kit
+        if kit["colours"].get("highlight") and not opts.get("highlight_color"):
+            opts["highlight_color"] = nearest_colour(kit["colours"]["highlight"])
+    opts["effects"] = eff
 
 
 def _resolve_caption_options(opts: dict, args, spec: dict, preset: dict) -> None:
@@ -268,6 +292,8 @@ def normalize_clip_spec(spec: dict, base_dir: Path) -> dict:
     out["source_video"] = _path(spec["source_video"])
     if spec.get("filler_video"):
         out["filler_video"] = str(_path(spec["filler_video"]))
+    if spec.get("brand_kit"):
+        out["brand_kit"] = str(_path(spec["brand_kit"]))
     out["draft_name"] = str(spec.get("draft_name") or f"{out['source_video'].stem}_clip")
     out["start"] = parse_time(spec["start"]) if spec.get("start") not in (None, "") else None
     out["end"] = parse_time(spec["end"]) if spec.get("end") not in (None, "") else None

@@ -31,7 +31,7 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from streamclipper import paths
 from streamclipper.captions.styles import AUTO_STYLE, DEFAULT_HOOK_STYLE, HOOK_STYLES, STYLES
-from streamclipper.dashboard import editor, library
+from streamclipper.dashboard import brandkit, editor, library
 from streamclipper.dashboard.jobs import (
     JobStore,
     Runner,
@@ -44,6 +44,7 @@ from streamclipper.dashboard.jobs import (
     validate_options,
 )
 from streamclipper.dashboard.shares import DAYS, ShareStore
+from streamclipper.effects import ENHANCE_MIX, ZOOM_LEVELS
 from streamclipper.util import VIDEO_EXTS, ToolError
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -500,6 +501,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._post(segs)
         if method == "PUT" and segs == ["api", "upload"]:
             return self._upload(query)
+        if method == "PUT" and segs == ["api", "brand", "upload"]:
+            return self._brand_upload(query)
         raise HttpError(405, "Method not allowed.")
 
     def _get(self, segs: list, query: dict):
@@ -550,6 +553,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_file(Path(video), "video/mp4")
         if api == ["settings"]:
             return self._send_json(200, self._settings())
+        if api == ["brand"]:
+            return self._send_json(200, brandkit.read(srv.ws, srv.lan))
         if api == ["doctor"]:
             with srv.doctor_lock:
                 return self._send_json(200, dict(srv.doctor))
@@ -583,6 +588,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._clip_action(check_job_id(api[1]), library.check_key(api[3]), api[4], body)
         if api == ["settings"]:
             return self._send_json(200, self._save_settings(body))
+        if api == ["brand"]:
+            if srv.lan:
+                raise HttpError(403, "The brand kit can be changed only on this PC.")
+            return self._send_json(200, brandkit.save(srv.ws, body))
         if api == ["doctor"]:
             return self._send_json(202, self._start_doctor())
         if api == ["shares"]:
@@ -707,6 +716,25 @@ class Handler(BaseHTTPRequestHandler):
         os.replace(part, dest)
         self._send_json(201, {"upload": dest.name, "size": length})
 
+    def _brand_upload(self, query: dict):
+        """A logo/card image or a font for the brand kit, into <workspace>/brand/ (this PC only, max 20 MB)."""
+        if self.server.lan:
+            self._drain()
+            raise HttpError(403, "The brand kit can be changed only on this PC.")
+        name = brandkit.safe_name((query.get("name") or [""])[0])
+        try:
+            length = int(self.headers.get("Content-Length") or "")
+        except ValueError:
+            raise HttpError(411, "Content-Length is required.") from None
+        if not 0 < length <= brandkit.MAX_UPLOAD:
+            self._drain()
+            raise HttpError(413, "Brand files must be smaller than 20 MB.")
+        self._body_read = True
+        data = self.rfile.read(length)
+        if len(data) != length:
+            raise HttpError(400, "The upload stopped before the end; try again.")
+        self._send_json(201, brandkit.store_file(self.server.ws, name, data))
+
     # ---- API helpers -------------------------------------------------------------------------------------------
 
     def _options(self) -> dict:
@@ -724,6 +752,8 @@ class Handler(BaseHTTPRequestHandler):
             "gallery": gallery_geometry(),
             "defaults": self.server.settings(),
             "mode": "lan" if self.server.lan else "local",
+            "effects": {"zoom": list(ZOOM_LEVELS), "enhance_speech": list(ENHANCE_MIX)},
+            "brand_kit": brandkit.kit_path(self.server.ws).is_file(),
         }
 
     def _public_job(self, job: dict) -> dict:
@@ -820,7 +850,10 @@ class Handler(BaseHTTPRequestHandler):
         if opts["mode"] == "live":
             argv = build_live_argv(source, opts, jdir)
         else:
-            argv = build_vod_argv(source, opts, jdir)
+            kit = brandkit.kit_path(srv.ws)
+            if opts["brand_kit"] and not kit.is_file():
+                raise ToolError("No brand kit yet.", "set it up in Settings > Brand kit, or turn Brand kit off")
+            argv = build_vod_argv(source, opts, jdir, kit)
         label = source if re.match(r"^https?://", source, re.I) else Path(source).name
         job = srv.store.create(opts["mode"], label[:200], argv, opts, job_id=job_id)
         srv.runner.submit(job_id)

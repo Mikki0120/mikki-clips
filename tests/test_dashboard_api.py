@@ -254,3 +254,41 @@ def test_slow_checks_run_off_the_request_thread(dash, monkeypatch):
         t0 = time.perf_counter()
         assert dash.json("GET", path)[0] == 200
         assert time.perf_counter() - t0 < 1.0, path
+
+
+def test_brand_kit_upload_save_and_use_in_a_job(dash):
+    from pathlib import Path
+
+    logo = (Path(__file__).resolve().parents[1] / "docs" / "examples" / "brand_logo.png").read_bytes()
+    st, b = dash.json("GET", "/api/brand")
+    assert st == 200 and b["kit"] is None and b["files"] == {"images": [], "fonts": []}
+    assert dash.json("GET", "/api/options")[1]["brand_kit"] is False
+    # no kit yet: a job with the brand kit on is refused
+    st, e = dash.json("POST", "/api/jobs", {"source": "https://example.com/v", "brand_kit": True})
+    assert st == 400 and "brand kit" in e["error"].lower()
+    st, r = dash.json("PUT", "/api/brand/upload?name=my%20logo.png", raw=logo)
+    assert st == 201 and r["file"] == "my logo.png"
+    assert dash.req("PUT", "/api/brand/upload?name=evil.exe", raw=b"MZ")[0] == 415
+    assert dash.req("PUT", "/api/brand/upload?name=..%2F..%2Fx.png", raw=logo)[0] == 201
+    assert not (dash.srv.ws / "x.png").exists() and (dash.srv.ws / "brand" / "x.png").is_file()
+    bad = {"logo": {"image": "missing.png"}}
+    assert dash.json("POST", "/api/brand", bad)[0] == 400
+    kit = {"logo": {"image": "my logo.png", "position": "auto"}, "handle": "@me", "intro": {"text": "HI", "seconds": 1}}
+    st, r = dash.json("POST", "/api/brand", kit)
+    assert st == 200 and r["kit"]["handle"] == "@me" and not r["error"]
+    assert dash.json("GET", "/api/options")[1]["brand_kit"] is True
+    jid = dash.new_job(source="https://example.com/v", brand_kit=True, zoom="medium", remove_fillers=True)
+    argv = dash.srv.store.get(jid)["argv"]
+    assert argv[argv.index("--brand-kit") + 1] == str(dash.srv.ws / "brand" / "brand_kit.json")
+    assert argv[argv.index("--zoom") + 1] == "medium" and "--remove-fillers" in argv
+    assert dash.json("POST", "/api/brand", {"clear": True})[1]["kit"] is None
+
+
+def test_brand_kit_is_read_only_on_the_network(tmp_path, monkeypatch):
+    d = start(tmp_path, monkeypatch, lan=True)
+    try:
+        assert d.json("GET", "/api/brand")[1]["read_only"] is True
+        assert d.json("POST", "/api/brand", {"handle": "@x"})[0] == 403
+        assert d.req("PUT", "/api/brand/upload?name=a.png", raw=b"\x89PNG")[0] == 403
+    finally:
+        stop(d)

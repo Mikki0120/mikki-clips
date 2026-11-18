@@ -30,3 +30,10 @@
   with StreamClipper's AGPL-3.0-or-later.
 - Used by: game HUD detection (`--hud`, `calibrate-hud`), through onnxruntime (`vision` extra). Without
   onnxruntime or the model, HUD detection uses colour cues only.
+
+## bd.rnnn (speech enhancement, `--enhance-speech`)
+
+- Model: RNNoise-nu `beguiling-drafter` (signal: voice incl. laughter, noise: recording noise), used by ffmpeg's `arnndn` filter.
+- Source: https://github.com/GregorR/rnnoise-models/blob/master/beguiling-drafter-2018-08-30/bd.rnnn
+- SHA-256: `ae3f7411e1e6a884f839a4a145c394408398f09854dbc1216ee02faafc98a17b` (299,693 bytes)
+- Licence: the rnnoise-models repository states that, apart from its tools, none of the work is creative and so none of it is subject to copyright. RNNoise itself is BSD-3-Clause.

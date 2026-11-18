@@ -7,7 +7,12 @@ import shutil
 import time
 from pathlib import Path
 
-from streamclipper.captions.capcut import make_pop_bounce_keyframes, make_text_glow_effect, parse_multicolor_styles
+from streamclipper.captions.capcut import (
+    _kf_track,
+    make_pop_bounce_keyframes,
+    make_text_glow_effect,
+    parse_multicolor_styles,
+)
 from streamclipper.captions.styles import NEON_PALETTE
 from streamclipper.draft.rootmeta import register_draft, unique_draft_name
 from streamclipper.env import (
@@ -232,7 +237,18 @@ def build_from_spec_dict(spec: dict) -> Path:
             )
             extra_refs.append(tr_id)
         seg["extra_material_refs"] = extra_refs
-        if clip_item.get("anim") == "punch-zoom":
+        if clip_item.get("zoom_keys"):  # punch-in zoom (effects.add_capcut_zoom): scale + position keyframes
+            pts = clip_item["zoom_keys"]
+            seg["common_keyframes"] = [
+                _kf_track(prop, [(p[0], p[k]) for p in pts])
+                for prop, k in (
+                    ("KFTypeScaleX", 1),
+                    ("KFTypeScaleY", 1),
+                    ("KFTypePositionX", 2),
+                    ("KFTypePositionY", 3),
+                )
+            ]
+        elif clip_item.get("anim") == "punch-zoom":
             seg["common_keyframes"] = make_pop_bounce_keyframes(dur_us, base_scale=zm, anim_style="punch-zoom")
         return seg, dur_us
 

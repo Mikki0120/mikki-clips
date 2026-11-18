@@ -20,8 +20,10 @@ from streamclipper.captions.styles import (
     NEON_PALETTE,
     STYLES,
 )
-from streamclipper.dashboard import library
+from streamclipper.dashboard import brandkit, library
+from streamclipper.dashboard.jobs import parse_bool
 from streamclipper.draft.rootmeta import OUTPUT_SUFFIXES, unique_output_name
+from streamclipper.effects import ENHANCE_MIX, ZOOM_LEVELS, effects_of
 from streamclipper.state import write_json_atomic
 from streamclipper.util import ToolError, run_cmd
 
@@ -280,6 +282,7 @@ def context(store, job_id: str, key: str, lan: bool = False) -> dict:
         "title": clip.get("title", ""),
         "description": clip.get("description", ""),
         "hashtags": clip.get("hashtags", []),
+        **_plan_effects(plan),
     }
     hist = _history(edir)
     current = orig
@@ -349,12 +352,25 @@ def context(store, job_id: str, key: str, lan: bool = False) -> dict:
         "hook_styles": list(HOOK_STYLES),
         "positions": list(CAPTION_POSITIONS),
         "highlights": ["", *HIGHLIGHT_COLOURS],
+        "effect_choices": {"zoom": list(ZOOM_LEVELS), "enhance_speech": list(ENHANCE_MIX)},
+        "brand_kit_ready": brandkit.kit_path(store.ws).is_file(),
         "original": orig,
         "current": current,
         "pending": pending,
         "history": hist,
         "mp4_url": clip.get("mp4_url", ""),
         "gate": clip.get("gate"),
+    }
+
+
+def _plan_effects(plan: dict) -> dict:
+    """The editor form's effect fields from a clip plan (all off for plans before 5.3)."""
+    eff = effects_of(plan)
+    return {
+        "zoom": eff["zoom"],
+        "remove_fillers": eff["remove_fillers"],
+        "enhance_speech": eff["enhance_speech"],
+        "brand_kit": bool(eff["brand_kit"]),
     }
 
 
@@ -557,6 +573,13 @@ def validate(ctx: dict, edit: dict) -> dict:
         raise ToolError("Unknown caption position.", "pick one from the list")
     if hl not in ("", *HIGHLIGHT_COLOURS):
         raise ToolError("Unknown highlight colour.", "pick one from the list")
+    zoom, enh = edit.get("zoom") or "off", edit.get("enhance_speech") or "off"
+    if zoom not in ZOOM_LEVELS:
+        raise ToolError("Unknown zoom level.", "pick one from the list")
+    if enh not in ENHANCE_MIX:
+        raise ToolError("Unknown speech enhancement.", "pick one from the list")
+    fillers = parse_bool(edit.get("remove_fillers"), "remove_fillers", False)
+    brand_on = parse_bool(edit.get("brand_kit"), "brand_kit", False)
     tags = edit.get("hashtags") or []
     if isinstance(tags, str):
         tags = tags.split()
@@ -583,14 +606,19 @@ def validate(ctx: dict, edit: dict) -> dict:
         "description": _text(edit.get("description"), "description", MAX_DESC, allow_newline=True).strip(),
         "hashtags": clean_tags,
         "caption_anchor": anchor,
+        "zoom": zoom,
+        "remove_fillers": fillers,
+        "enhance_speech": enh,
+        "brand_kit": brand_on,
     }
     if segs:
         out["segments"] = segs
     return out
 
 
-def clip_spec(ctx: dict, form: dict, plan: dict, video: Path, base_name: str) -> dict:
-    """README-style clip spec for build_high_level_clip (render --spec / build --spec)."""
+def clip_spec(ctx: dict, form: dict, plan: dict, video: Path, base_name: str, brand_kit: Path = None) -> dict:
+    """README-style clip spec for build_high_level_clip (render --spec / build --spec). brand_kit: the
+    workspace's brand kit JSON, used when the form turns it on."""
     words = [
         {"word": text, "start": w["s"], "end": w["e"]} for text, w in zip(form["words"], ctx["words"], strict=True)
     ]
@@ -608,6 +636,13 @@ def clip_spec(ctx: dict, form: dict, plan: dict, video: Path, base_name: str) ->
         "words": words,
         "editor_form": form,
     }
+    for k in ("zoom", "enhance_speech"):
+        if (form.get(k) or "off") != "off":
+            spec[k] = form[k]
+    if form.get("remove_fillers"):
+        spec["remove_fillers"] = True
+    if form.get("brand_kit") and brand_kit:
+        spec["brand_kit"] = str(brand_kit)
     if form["highlight_color"]:
         spec["highlight_color"] = form["highlight_color"]
     if form.get("caption_anchor"):
@@ -685,7 +720,10 @@ def apply(
     hist = _history(edir)
     n = max([int(h.get("v") or 0) for h in hist] + [0]) + 1
     spec_path = edir / f"v{n}.json"
-    write_json_atomic(spec_path, clip_spec(ctx, form, plan, si["video"], base))
+    kit = brandkit.kit_path(store.ws)
+    if form.get("brand_kit") and not kit.is_file():
+        raise ToolError("No brand kit yet.", "set it up in Settings > Brand kit, or turn Brand kit off")
+    write_json_atomic(spec_path, clip_spec(ctx, form, plan, si["video"], base, kit))
     reserved = {v["name"] for vs in (parent.get("variants") or {}).values() for v in vs}
     name, k = base, 1
     while name in reserved or unique_output_name(out, name, suffixes=OUTPUT_SUFFIXES) != name:

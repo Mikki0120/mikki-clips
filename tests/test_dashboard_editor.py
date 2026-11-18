@@ -317,3 +317,22 @@ def test_thumbs_sprite_is_made_once(dash, monkeypatch):
         st, h, body = dash.req("GET", c["thumbs"]["url"])
         assert st == 200 and h["Content-Type"] == "image/jpeg" and body == b"\xff\xd8fakejpg"
     assert len(calls) == 1 and "tile=30x1" in " ".join(calls[0])
+
+
+def test_effects_go_into_the_render_spec(dash):
+    c = _ctx(dash)
+    assert c["current"]["zoom"] == "off" and c["current"]["remove_fillers"] is False
+    assert c["effect_choices"]["zoom"] == ["off", "light", "medium", "strong"] and c["brand_kit_ready"] is False
+    url = f"/api/jobs/{dash.job}/clips/clip_01/edit"
+    for bad in ({"zoom": "max"}, {"enhance_speech": "x"}, {"remove_fillers": "maybe"}):
+        assert dash.json("POST", url, {"action": "render", "edit": _edit(c, **bad)})[0] == 400, bad
+    st, r = dash.json("POST", url, {"action": "render", "edit": _edit(c, brand_kit=True)})
+    assert st == 400 and "brand kit" in r["error"].lower()
+    e = _edit(c, zoom="medium", remove_fillers=True, enhance_speech="light")
+    st, r = dash.json("POST", url, {"action": "render", "edit": e})
+    assert st == 200, r
+    dash.wait(r["job"])
+    spec_path = dash.srv.ws / "jobs" / dash.job / "edits" / "clip_01" / "v1.json"
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    assert spec["zoom"] == "medium" and spec["remove_fillers"] is True and spec["enhance_speech"] == "light"
+    assert "brand_kit" not in spec and spec["editor_form"]["zoom"] == "medium"

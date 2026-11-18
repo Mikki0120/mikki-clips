@@ -6,7 +6,7 @@ import math
 from pathlib import Path
 
 from streamclipper import reframe
-from streamclipper.asr import read_wav16k, rescue_words
+from streamclipper.asr import filler_pass, read_wav16k, rescue_words
 from streamclipper.audio import (
     _mmss,
     audio_envelope,
@@ -35,13 +35,16 @@ from streamclipper.clipplan import (
     make_clip_plan,
     plan_clip_spec,
     restyle_plan,
+    with_effects,
 )
 from streamclipper.discovery import _discover_settings, clips_document, discover, print_clip_table
 from streamclipper.download import download_audio, download_slice, fetch_chat, youtube_heatmap
 from streamclipper.draft.rootmeta import RENDER_SUFFIXES, unique_output_name
 from streamclipper.draft.writer import build_from_spec_dict, guard_capcut, resolve_draft_root
+from streamclipper.effects import add_capcut_zoom, effects_of, plan_zoom
 from streamclipper.env import detect_env, doctor_checks, ensure_bundled_assets, find_capcut_local
 from streamclipper.faces import speech_spans
+from streamclipper.fillers import remove_fillers
 from streamclipper.gate import _gate_summary, render_and_gate
 from streamclipper.layout import (
     black_frames,
@@ -274,6 +277,12 @@ def build_high_level_clip(spec: dict, base_dir: Path, args) -> dict:
         }
         for (a, b), pw in zip(pieces, piece_words, strict=True)
     ]
+    plan_words, removed = norm["words"], []
+    if rsegs and (opts.get("effects") or {}).get("remove_fillers"):
+        print("Fillers: not removed with reframe segments (their pieces must stay frame-contiguous).")
+    elif not rsegs:
+        verbatim = (src, 0.0, ws, we, None, work_dir / "analysis")
+        segs, plan_words, removed = _apply_fillers(segs, norm["words"], None, opts, "Clip", verbatim, ws)
     volume = loudness_gain(measure_loudness(Path(panels["main_src"])))
     style = {
         "font_size": norm.get("font_size"),
@@ -303,16 +312,9 @@ def build_high_level_clip(spec: dict, base_dir: Path, args) -> dict:
     if getattr(args, "portable_drafts", False):
         ll["portable"] = True
     spec_out = work_dir / f"{name}_timeline.json"
-    spec_out.write_text(json.dumps(ll, indent=2, ensure_ascii=False), encoding="utf-8")
-    print(
-        f"Timeline spec -> {fwd(spec_out)} (layout={opts['layout']}, preset={opts['preset'] or '-'}, volume x{volume})"
-    )
-    draft_name = name
-    if not args.no_draft:
-        draft_name = build_from_spec_dict(ll).name
     plan = make_clip_plan(
         name,
-        draft_name,
+        name,  # the draft name is set once the draft is written
         fwd(src),
         src,
         ws,
@@ -323,12 +325,19 @@ def build_high_level_clip(spec: dict, base_dir: Path, args) -> dict:
         game_box,
         panels,
         ll,
-        norm["words"],
+        plan_words,
         start,
         hook,
         spec_out,
         win_offset=ws,
     )
+    _finish_effects(plan, ll, panels, removed, ws, "Clip")
+    spec_out.write_text(json.dumps(ll, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(
+        f"Timeline spec -> {fwd(spec_out)} (layout={opts['layout']}, preset={opts['preset'] or '-'}, volume x{volume})"
+    )
+    if not args.no_draft:
+        plan["draft"] = build_from_spec_dict(ll).name
     if rsegs:
         plan["reframe_segments"] = rsegs  # source time; the panel above already holds them
     plan_out = work_dir / f"{name}.clip.json"
@@ -531,6 +540,8 @@ def make_stream_clip(
         spans = [(a + ws, b + ws) for a, b in black_frames(Path(panels["main_src"]))]
         if spans:
             segs = cut_black(segs, spans, words)
+    verbatim = (win_file, ws, 0.0, wmeta["dur"], asr, work_dir / "analysis")
+    segs, words, removed = _apply_fillers(segs, words, clip["peak"], opts, f"Clip {idx + 1}", verbatim, ws)
     segs = fit_timeline(segs, words)
     hook = hook_override or clip["hook_headline"]
     if opts.get("profanity_filter"):
@@ -559,13 +570,9 @@ def make_stream_clip(
     if portable:
         spec["portable"] = True
     spec_out = work_dir / f"{proj_name}_spec.json"
-    spec_out.write_text(json.dumps(spec, indent=2, ensure_ascii=False), encoding="utf-8")
-    draft_name = proj_name
-    if not no_draft:
-        draft_name = build_from_spec_dict(spec).name
     plan = make_clip_plan(
         proj_name,
-        draft_name,
+        proj_name,  # the draft name is set once the draft is written
         url or fwd(src),
         win_file,
         ws,
@@ -581,6 +588,10 @@ def make_stream_clip(
         hook,
         spec_out,
     )
+    _finish_effects(plan, spec, panels, removed, ws, f"Clip {idx + 1}")
+    spec_out.write_text(json.dumps(spec, indent=2, ensure_ascii=False), encoding="utf-8")
+    if not no_draft:
+        plan["draft"] = build_from_spec_dict(spec).name
     plan_out = work_dir / f"{proj_name}.clip.json"
     plan_out.write_text(json.dumps(plan, indent=2, ensure_ascii=False), encoding="utf-8")
     print(
@@ -589,6 +600,78 @@ def make_stream_clip(
         f"volume x{volume} -> {fwd(plan_out)}"
     )
     return plan
+
+
+FILLER_ASR = {"model": "auto", "device": "auto", "language": None, "duration": 0.0}
+
+
+def _apply_fillers(
+    segs: list, words: list, peak, opts: dict, label: str, verbatim: tuple = None, origin: float = None
+) -> tuple:
+    """
+    --remove-fillers: (pieces, kept words, removed words); unchanged when the effect is off or nothing is cut.
+    verbatim = (media file, its offset in source seconds, a, b, asr dict, cache dir): a Whisper pass over [a, b]
+    of the file with a disfluent prompt adds the um/uh the normal transcript leaves out (asr.filler_pass).
+    """
+    if not (opts.get("effects") or {}).get("remove_fillers") or not words:
+        return segs, words, []
+    heard = words
+    if verbatim:
+        path, base, a, b, asr, cache = verbatim
+        try:
+            shifted = [dict(w, s=w["s"] - base, e=w["e"] - base) for w in words]
+            merged, added, secs = filler_pass(Path(path), a, b, shifted, asr or FILLER_ASR, Path(cache))
+            if added:
+                heard = [dict(w, s=round(w["s"] + base, 3), e=round(w["e"] + base, 3)) for w in merged]
+                print(f"{label} fillers: a verbatim Whisper pass heard {added} um/uh ({secs:.1f}s)")
+        except (ToolError, RuntimeError, OSError, ValueError, ImportError) as e:
+            print(f"{label} fillers: verbatim Whisper pass skipped ({str(e).splitlines()[0][:120]})")
+    if heard is not words:  # the pieces get the um/uh too, so the cuts can find them
+        segs = [
+            dict(s, words=[w for w in heard if w["e"] > s["cut_start"] and w["s"] < s["cut_end"]])
+            if s.get("kind") != "tease"
+            else s
+            for s in segs
+        ]
+    new, removed = remove_fillers(segs, heard, peak, origin)
+    if not removed:
+        print(f"{label} fillers: none to remove")
+        return segs if heard is words else _strip_added(segs, words), words, []
+    gone = {(w["w"], round(w["s"], 3)) for w in removed}
+    kept = [w for w in words if (w["w"], round(w["s"], 3)) not in gone]
+    shown = ", ".join(str(w["w"]).strip() for w in removed[:8])
+    print(f"{label} fillers: removed {len(removed)} word(s) in {len(new) - len(segs)} extra cut(s): {shown}")
+    return _strip_added(new, kept), kept, removed
+
+
+def _strip_added(segs: list, words: list) -> list:
+    """Pieces whose words are only the transcript's words (a protected um/uh from the verbatim pass is not
+    captioned, as before)."""
+    keep = {(w["w"], round(w["s"], 3)) for w in words}
+    return [dict(s, words=[w for w in s.get("words") or [] if (w["w"], round(w["s"], 3)) in keep]) for s in segs]
+
+
+def _finish_effects(plan: dict, spec: dict, panels: dict, removed: list, ws: float, label: str) -> None:
+    """After make_clip_plan: the removed fillers on the plan, the face-safe zoom placement (cached on the plan,
+    reused by the MP4 render) and the matching CapCut zoom keyframes on the timeline spec."""
+    if removed:
+        plan["fillers_removed"] = [
+            {"w": w["w"], "s": round(w["s"] - ws, 3), "e": round(w["e"] - ws, 3)} for w in removed
+        ]
+    if effects_of(plan)["zoom"] == "off":
+        return
+    zp = plan_zoom(plan)
+    plan["zoom_plan"] = zp
+    canvas_h = 1920 if plan["ratio"] == "9:16" else 1080
+    heights = {"main": probe_video(Path(panels["main_src"]))["height"] / canvas_h}
+    if panels.get("overlay_src") and not panels.get("overlay_loop"):
+        heights["overlay"] = probe_video(Path(panels["overlay_src"]))["height"] / canvas_h
+    keyed = add_capcut_zoom(spec, zp, heights)
+    notes = f" ({'; '.join(zp['notes'][:3])})" if zp["notes"] else ""
+    print(
+        f"{label} zoom {zp['level']}: {len(zp['main'])} punch-in(s) on the main panel, {len(zp['overlay'])} on "
+        f"the cam panel, {keyed} CapCut segment(s) keyed{notes}"
+    )
 
 
 def _rescue_clip_words(words: list, win_file: Path, ws: float, win_dur: float, asr: dict, cache: Path, idx: int):
@@ -616,6 +699,7 @@ def cmd_render(args):
             out_dir = Path(args.out).resolve() if args.out else sp.parent
             if getattr(args, "caption_style", None) or getattr(args, "hook_style", None):
                 spec = restyle_plan(spec, args.caption_style, args.hook_style)
+            spec = with_effects(spec, args)
             name = spec["name"]
             if not args.overwrite:
                 name = unique_output_name(out_dir, name, suffixes=RENDER_SUFFIXES)
