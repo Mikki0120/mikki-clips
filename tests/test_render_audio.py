@@ -55,6 +55,8 @@ def test_aac_overshoot_lowers_the_limiter_ceiling():
     assert aac_ceiling(-3.0, -2.0) == -3.0
     assert aac_ceiling(-3.0, None) == -3.0
     assert aac_ceiling(-3.0, 0.2) == round(-3.0 - 1.4 - 0.3, 2)
+    # repeated drops stop at the floor (the render loop then ends: the ceiling no longer changes)
+    assert aac_ceiling(-5.5, 0.5) == -6.0 and aac_ceiling(-6.0, 0.5) == -6.0
 
 
 def test_sustained_limiting_aligns_logs_that_differ_by_a_frame():

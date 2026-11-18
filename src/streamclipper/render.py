@@ -182,11 +182,18 @@ def next_stage(stage: int, limiting: float) -> int:
     return None
 
 
+LIMIT_FLOOR_DB = -6.0  # lowest limiter ceiling: each drop makes the next gain search push harder into the limiter
+
+
 def aac_ceiling(limit_db: float, aac_tp) -> float:
-    """Limiter ceiling lowered by the AAC overshoot so the encoded true peak lands at <= -1.2 dBTP."""
+    """
+    Limiter ceiling lowered by the AAC overshoot so the encoded true peak lands at <= -1.2 dBTP, never below
+    LIMIT_FLOOR_DB. Without the floor a hard-limited clip ran away (live Twitch clip on Colab: -3 -> -8.9 dB,
+    the gain search then hit its cap and the clip stayed at -14.3 LUFS with the AAC peak at -6.8 dBTP).
+    """
     if aac_tp is None or aac_tp <= AAC_TP_MAX:
         return limit_db
-    return round(limit_db - (aac_tp - AAC_TP_MAX) - 0.3, 2)
+    return max(LIMIT_FLOOR_DB, round(limit_db - (aac_tp - AAC_TP_MAX) - 0.3, 2))
 
 
 def sfx_volume_cap(volume: float, voice_lufs, sfx_lufs) -> float:
