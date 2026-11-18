@@ -11,8 +11,8 @@ SCORE_WEIGHTS = {"hook": 20, "story": 25, "emotion": 25, "pacing": 10, "engageme
 COMPONENTS = ("hook", "story", "emotion", "pacing", "engagement")
 HUD_MIN = 0.3  # events weaker than this never make a hud component
 HUD_REASON_WEIGHT = 18.0  # reason weight per unit of event strength ('WASTED on screen' leads the reason)
-# weight of the face signal (facecam movement around the payoff) inside emotion; 0 = recorded but not scored
-# (tuned in the selection eval on unseen streams)
+# weight of the face signal (facecam movement around the payoff) inside emotion; 0 = recorded but not scored.
+# Checked in the unseen-stream eval (5.3.0): 0.15 helped TUNE only with changes that lowered HOLDOUT, so 0.
 FACE_MOTION_WEIGHT = 0.0
 # --content talk (podcasts, interviews): what is said matters more than how loud it is
 TALK_WEIGHTS = {"hook": 25, "story": 35, "emotion": 15, "pacing": 15, "engagement": 10}
@@ -20,7 +20,10 @@ CONTENTS = ("gaming", "talk")
 LOUD_DB = 12.0  # voice this far above the stream's usual level counts as "loud" for the rage rule
 # Quality bar (passes_bar): by default only clips above it are output. --min-score replaces min_score;
 # --min-score 0 lists every candidate without the bar. Tuned on the labelled eval in tests/fixtures/eval
-# (tools/eval_selection.py, tests/test_eval.py).
+# (tools/eval_selection.py, tests/test_eval.py). 5.3.0 re-check on 8 unseen public streams labelled blind
+# (TUNE = 5 + the 2 old ones, HOLDOUT = 3): the best TUNE values (face 0.15, min_peak_db 12.0, min_reaction 0.35,
+# talk_min_rate 2.5, talk_min_words 40) raised TUNE precision 0.16 -> 0.20 but lowered HOLDOUT 0.081 -> 0.078,
+# so these simpler values stay (TUNE 19/118 good picks, HOLDOUT 5/62).
 DEFAULT_BAR = {
     "min_score": 50.0,  # combined score
     "cue_min_score": 40.0,  # lower score floor for a scream or a milestone line ("finally", "I did it")
@@ -73,7 +76,7 @@ NO_BAR = {
     "music_min_voiced": 2.0,
     "laugh_exempt": 0.0,
     "hud_cue": 999.0,
-}  # v2 behaviour (score >= 50 only); tools/eval_selection.py reports it as 'before'
+}  # v2 behaviour (score >= 50 only): tools/eval_selection.py --no-bar
 # Quality bar for --content talk: a calm podcast has no loud payoff, so the clip needs real talk
 # (enough words at a normal rate) and a reason to exist: a strong line, laughter or an LLM pick.
 TALK_BAR = {
