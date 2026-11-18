@@ -1,4 +1,22 @@
 # Changelog
+## 5.3.0 (2026-11-19)
+### Added
+- Game HUD detection: `--hud auto|off|gta5|gta6|generic` and `--hud-profile FILE` on `discover-clips` and `clip-stream`. The GTA V profile finds WASTED, BUSTED, MISSION PASSED, MISSION FAILED and 3+ wanted stars (test videos: precision 1.00, recall 0.71); `gta6` is experimental; `generic` looks for big text, flashes and kill-feed bursts. Events add a `hud` score component and reasons such as "WASTED on screen". OCR uses a PaddleOCR ONNX model downloaded once (SHA-256 checked).
+- `streamclipper calibrate-hud` writes a HUD profile and a contact sheet from a game video (for GTA 6 after release).
+- MediaPipe face tracking (BlazeFace full range, bundled) with tiling for small facecams, smoothing with a dead zone and active-speaker choice for 2+ faces; OpenCV Haar stays as the fallback (`vision-haar` extra). `doctor` shows the face detector and warns about two OpenCV packages.
+- Editing effects, all off by default: `--zoom light|medium|strong` (punch-in on the payoff and hype words, faces kept in frame), `--remove-fillers`, `--enhance-speech light|strong` (ffmpeg `arnndn` with a bundled RNNoise model), `--brand-kit FILE` (logo, handle, font, colours, intro/outro card). In the dashboard (Home Advanced drawer, editor Effects card, Settings Brand kit) and the Colab notebook.
+- Publishing with your own credentials: `streamclipper publish youtube|instagram|pack|schedule` (YouTube Shorts private by default, scheduled uploads, Instagram Reels, TikTok publish pack, a 7-day schedule, `--dry-run`); dashboard Publish dialog, Schedule week and Settings > Publishing. Tested only against a mocked API.
+- Export gate row `caption_coverage`: share of spoken words on screen and the longest uncaptioned stretch of speech (FAIL below 97% or above 0.6 s).
+- Selection check on 8 unseen public streams with a blind, pre-registered tune/holdout split; `tools/eval_selection.py --split tune|holdout|all`, `--bar`, `--weights`, `--before`. The numbers are in the guide (Selection quality); no threshold changed.
+- Colab notebook: installs the `vision` extra; cell 6 has `hud`, `zoom`, `remove_fillers` and `enhance_speech`.
+### Fixed
+- Captions: very short and zero-length words were dropped or joined badly; shouted speech that Whisper's voice filter skipped is recovered with a second pass per clip window; captions no longer count small background faces as faces to avoid.
+- Speech enhancement output is delayed back into sync (ffmpeg `arnndn` adds 10 ms of latency).
+- Colab (found on a real T4 run): Whisper fell back to the CPU because the image has no CUDA 12 cuBLAS; the notebook now installs the `gpu` extra on a GPU runtime and StreamClipper preloads its CUDA 12 libraries on Linux (T4: 58.8x realtime). Running cell 7 before cells 5-6 prints which cell to run instead of a NameError. Cell 2 prints the pip and doctor output.
+- Resume: re-running `clip-stream` (or Colab cell 7) with the same inputs keeps the clips that are already made instead of making `clip_01_2` copies.
+- Captions: several words that Whisper puts at the same instant now share one caption instead of getting a 0 s caption (found by the Linux check).
+- Loudness: the AAC overshoot check no longer lowers the limiter ceiling below -6 dB; a hard-limited live clip stayed at -14.4 LUFS before.
+- `doctor` says when MediaPipe is installed but cannot start (missing libEGL on headless Linux) and gives the apt fix.
 ## 5.2.1 (2026-11-18)
 ### Fixed
 - Editor preview: in the first 2 s the hook banner and the caption no longer draw on top of each other; the preview places the hook and moves the caption below it with the same rules as the render.

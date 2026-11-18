@@ -20,6 +20,10 @@
 - **Ready to post.** 1080x1920 MP4s with animated captions (15 styles), a hook headline and a thumbnail.
 - **Editable.** Every clip is also a CapCut Desktop project, with each layer on its own track.
 - **Reframe editor.** Split a clip into parts and choose what each part shows: its own layout, crop and keyframed pan, or Auto-reframe to follow the face.
+- **Sees the game screen.** GTA V's WASTED, BUSTED, mission screens and wanted stars count towards the score (`--hud`; GTA 6 profile experimental).
+- **Submagic-style edits, all optional.** Punch-in zoom, filler-word removal, speech cleanup and your own brand kit.
+- **Auto-publish** to YouTube Shorts and Instagram Reels with your own API credentials, or schedule a week (`streamclipper publish`).
+- **MediaPipe face tracking** follows the face and picks who is talking in podcasts and Auto-reframe.
 - **Free, no watermark, no limits.** Runs on free Google Colab or your own PC. No paid AI needed.
 
 Works with Twitch, YouTube and Kick links, or a local video file. Made for gaming streams; podcasts are in beta.
@@ -86,7 +90,7 @@ Close CapCut, run `clip-stream` without `--no-draft`, then open CapCut. Your cli
 | Gaming VODs | Stable. Tested on real streams. |
 | Live clipping | New. Tested on a real Twitch stream. YouTube Live and Kick not tested yet. |
 | Podcasts | Beta. |
-| Colab | Tested in a Linux container. |
+| Colab | Tested on a real Colab T4: speech recognition at 58.8x realtime. |
 
 ## Docs
 
