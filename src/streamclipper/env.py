@@ -72,7 +72,10 @@ def find_capcut_local() -> Path:
     if sys.platform == "win32":
         local = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData/Local")) / "CapCut"
     elif sys.platform == "darwin":
-        local = Path.home() / "Library/Application Support/CapCut"
+        # CapCut for Mac keeps its User Data under ~/Movies/CapCut; older builds used Application Support
+        local = Path.home() / "Movies/CapCut"
+        if not local.is_dir():
+            local = Path.home() / "Library/Application Support/CapCut"
     else:
         local = Path.home() / ".local/share/CapCut"
     return local
@@ -650,6 +653,15 @@ def doctor_checks(env: dict, assets: dict) -> list:
         if apps.is_dir()
         else []
     )
+    mac_app = Path("/Applications/CapCut.app/Contents/Info.plist")
+    if not versions and sys.platform == "darwin" and mac_app.is_file():
+        import plistlib
+
+        try:
+            with mac_app.open("rb") as f:
+                versions = [str(plistlib.load(f).get("CFBundleShortVersionString") or "installed")]
+        except Exception:
+            versions = ["installed"]
     rows.append(
         (
             "CapCut Desktop",
