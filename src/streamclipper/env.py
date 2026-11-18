@@ -543,7 +543,10 @@ def doctor_checks(env: dict, assets: dict) -> list:
     if fd_name == "MediaPipe":
         rows.append(("face detector", ok, f"{fd_name}: {fd_detail}", ""))
     else:
-        rows.append(("face detector", warn, f"{fd_name}: {fd_detail}", 'python -m pip install -e ".[vision]"'))
+        fix = 'python -m pip install -e ".[vision]"'
+        if "could not start" in fd_detail:
+            fix = "apt-get install -y libegl1 libgles2"
+        rows.append(("face detector", warn, f"{fd_name}: {fd_detail}", fix))
 
     if importlib.util.find_spec("numpy") is not None:
         try:

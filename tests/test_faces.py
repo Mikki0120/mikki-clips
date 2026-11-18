@@ -1,3 +1,6 @@
+import sys
+import types
+
 import pytest
 
 from streamclipper import faces, vision
@@ -59,6 +62,18 @@ def test_doctor_status_names(monkeypatch):
     assert faces.detector_status()[0] == "Haar fallback"
 
 
+def test_doctor_says_when_mediapipe_cannot_start(fresh, monkeypatch):
+    def boom(*a, **k):
+        raise OSError("libEGL.so.1: cannot open shared object file")
+
+    monkeypatch.setattr(faces, "_mediapipe_ok", lambda: True)
+    monkeypatch.setattr(faces, "MediaPipeFaces", boom)
+    monkeypatch.setattr(faces, "_haar_cv2", lambda: object())
+    monkeypatch.setitem(sys.modules, "mediapipe", types.SimpleNamespace(__version__="x"))
+    name, detail = faces.detector_status()
+    assert name == "Haar fallback" and "libEGL" in detail and "libegl1" in detail
+
+
 def test_tiles_overlap_by_half_and_cover_the_frame():
     ts = tiles(960, 540)
     assert len(ts) == 6
@@ -82,7 +97,10 @@ def test_tile_detections_map_back_with_keypoints_and_dedupe():
 def test_mediapipe_model_finds_no_face_on_a_blank_frame():
     pytest.importorskip("mediapipe")
     np = pytest.importorskip("numpy")
-    det = faces.MediaPipeFaces()
+    try:
+        det = faces.MediaPipeFaces()
+    except OSError as e:  # e.g. headless Linux without libEGL: get_detector falls back to Haar (tested above)
+        pytest.skip(f"MediaPipe cannot start here: {e}")
     assert det.detect(np.zeros((540, 960, 3), np.uint8)) == []
 
 

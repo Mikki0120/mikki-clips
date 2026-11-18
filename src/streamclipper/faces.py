@@ -199,7 +199,8 @@ def get_detector():
         try:
             det = MediaPipeFaces()
         except Exception as e:  # a broken mediapipe install: fall back, say why once
-            print(f"MediaPipe face detector could not start ({str(e).splitlines()[0][:120]}); using Haar.")
+            _DETECTOR["err"] = str(e).splitlines()[0][:120] if str(e) else type(e).__name__
+            print(f"MediaPipe face detector could not start ({_DETECTOR['err']}); using Haar.")
             det = None
     if det is None:
         cv2 = _haar_cv2()
@@ -211,12 +212,19 @@ def get_detector():
     return det
 
 
+MP_SYSLIB_HINT = "on Linux install its system libraries: apt-get install -y libegl1 libgles2"
+
+
 def detector_status() -> tuple:
     """(name, detail) for doctor: 'MediaPipe' | 'Haar fallback' | 'none'."""
     if _mediapipe_ok():
         import mediapipe as mp
 
-        return "MediaPipe", f"BlazeFace full-range + tiling (mediapipe {getattr(mp, '__version__', '?')})"
+        det = get_detector()  # really start it: an import can work while a system library is missing
+        if det is not None and det.name == "MediaPipe":
+            return "MediaPipe", f"BlazeFace full-range + tiling (mediapipe {getattr(mp, '__version__', '?')})"
+        why = f"MediaPipe could not start ({_DETECTOR.get('err', 'unknown error')}); " + MP_SYSLIB_HINT
+        return ("Haar fallback" if det is not None else "none"), why
     if _haar_cv2() is not None:
         return "Haar fallback", "OpenCV Haar cascades (pip install -e .[vision] for MediaPipe)"
     return "none", "no face detector: layouts use the skin-colour heuristic (pip install -e .[vision])"
