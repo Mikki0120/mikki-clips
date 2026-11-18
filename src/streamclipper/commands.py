@@ -416,12 +416,24 @@ def clip_stream(args) -> dict:
             "duration": res.get("duration"),
         }
     results, plans = [], []
+    make_key = _make_key(opts, args, hook_override, len(make) > 1)
     # a clip that cannot be made clean (blank screen) is skipped and the next one in clips.json is used
     for idx, clip in enumerate(res["clips"]):
         if n_make and len(plans) >= n_make:
             break
         n = len(plans)
         proj_name = f"{args.prefix}_{n + 1:02d}" if len(make) > 1 else args.prefix
+        done = None if args.overwrite else _made_before(res["state"], clip["rank"], make_key, work_dir, args)
+        if done is not None:  # a re-run with the same inputs (e.g. after a Colab disconnect) keeps finished clips
+            plan, ok = done
+            print(
+                f"Resuming: clip rank {clip['rank']} was already made as {plan['name']}; kept (--fresh makes it again)"
+            )
+            plans.append(plan)
+            if args.render:
+                results.append((plan["name"], ok))
+                _link_outputs(doc["clips"][idx], work_dir / f"{plan['name']}.mp4", work_dir)
+            continue
         try:
             plan = make_stream_clip(
                 clip,
@@ -450,10 +462,48 @@ def clip_stream(args) -> dict:
             mp4 = work_dir / f"{plan['name']}.mp4"
             results.append((plan["name"], render_and_gate(plan, mp4)))
             _link_outputs(doc["clips"][idx], mp4, work_dir)
-        res["state"].mark_rendered(clip["rank"], plan["name"])
+        res["state"].mark_rendered(clip["rank"], plan["name"], key=make_key)
     if results:
         save_clips(out_json, doc)
     return {"out_json": out_json, "doc": doc, "plans": plans, "gate": results}
+
+
+def _make_key(opts: dict, args, hook_override: str, numbered: bool) -> str:
+    """Fingerprint of everything that shapes a made clip, so a resume reuses a clip only when nothing changed."""
+    keep = {
+        "opts": opts,
+        "prefix": args.prefix,
+        "numbered": numbered,
+        "hook": hook_override,
+        "render": bool(args.render),
+        "draft": not args.no_draft,
+        "draft_root": str(args.draft_root or ""),
+    }
+    return hashlib.sha1(json.dumps(keep, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:16]
+
+
+def _made_before(state, rank, key: str, work_dir: Path, args):
+    """(plan, gate_ok) of a clip made before with the same settings whose files are all there, else None."""
+    name = state.made(rank, key)
+    if not name:
+        return None
+    plan_p = work_dir / f"{name}.clip.json"
+    try:
+        plan = json.loads(plan_p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    ok = True
+    if args.render:
+        try:
+            ok = bool(json.loads((work_dir / f"{name}.gate.json").read_text(encoding="utf-8")).get("pass"))
+        except (OSError, ValueError):
+            return None
+        if not (work_dir / f"{name}.mp4").is_file():
+            return None
+    if not args.no_draft and plan.get("draft"):
+        if not (Path(resolve_draft_root(args.draft_root)) / plan["draft"]).is_dir():
+            return None
+    return plan, ok
 
 
 def cmd_clip_stream(args):

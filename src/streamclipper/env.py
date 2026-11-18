@@ -358,14 +358,16 @@ def _first_line(cmd: list) -> str:
 
 
 _CUDA_DLL_DIRS = []  # folders already added (prepare_cuda runs once)
+_CUDA_LINUX_DONE = []  # Linux: the preload ran (it may have found nothing to load)
 
 
 def prepare_cuda() -> list:
     """
     Windows: make the pip-installed CUDA DLLs (nvidia-cublas-cu12, nvidia-cudnn-cu12, torch/lib) findable
-    for ctranslate2. Returns the folders added. No-op on other systems.
+    for ctranslate2. Linux: preload the pip-installed CUDA 12 libraries (the gpu extra) when the system has
+    none, e.g. a Colab image with another CUDA version ("libcublas.so.12 is not found"). Returns the folders used.
     """
-    if sys.platform != "win32" or _CUDA_DLL_DIRS:
+    if _CUDA_DLL_DIRS:
         return list(_CUDA_DLL_DIRS)
     import site
 
@@ -374,6 +376,13 @@ def prepare_cuda() -> list:
         roots.append(site.getusersitepackages())
     except AttributeError:
         pass
+    if sys.platform.startswith("linux"):
+        if not _CUDA_LINUX_DONE:
+            _CUDA_LINUX_DONE.append(True)
+            _CUDA_DLL_DIRS.extend(preload_linux_cuda(roots))
+        return list(_CUDA_DLL_DIRS)
+    if sys.platform != "win32":
+        return []
     for root in roots:
         for sub in ("nvidia/cublas/bin", "nvidia/cudnn/bin", "torch/lib"):
             d = Path(root) / sub
@@ -385,6 +394,47 @@ def prepare_cuda() -> list:
                 os.environ["PATH"] = str(d) + os.pathsep + os.environ.get("PATH", "")
                 _CUDA_DLL_DIRS.append(str(d))
     return list(_CUDA_DLL_DIRS)
+
+
+# loaded in this order: cuBLAS before cuDNN (cuDNN 9 links its sub-libraries itself)
+_LINUX_CUDA_LIBS = (
+    ("nvidia/cublas/lib", ("libcublasLt.so.12", "libcublas.so.12")),
+    ("nvidia/cudnn/lib", ("libcudnn.so.9",)),
+)
+
+
+def preload_linux_cuda(roots: list, cdll=None) -> list:
+    """
+    dlopen the CUDA 12 libraries of the nvidia-cublas-cu12 / nvidia-cudnn-cu12 wheels with RTLD_GLOBAL, so
+    ctranslate2's later dlopen("libcublas.so.12") finds them. Skipped for a library the system already has
+    (ldconfig). LD_LIBRARY_PATH cannot be used: it is read once when the process starts.
+    """
+    import ctypes
+
+    cdll = cdll or (lambda path: ctypes.CDLL(path, mode=ctypes.RTLD_GLOBAL))
+    used = []
+    for sub, names in _LINUX_CUDA_LIBS:
+        for root in roots:
+            d = Path(root) / sub
+            if not d.is_dir():
+                continue
+            for name in names:
+                if _system_has_lib(name) or not (d / name).is_file():
+                    continue
+                try:
+                    cdll(str(d / name))
+                except OSError:
+                    continue
+                if str(d) not in used:
+                    used.append(str(d))
+            break
+    return used
+
+
+def _system_has_lib(name: str) -> bool:
+    import ctypes.util
+
+    return ctypes.util.find_library(name.split(".so")[0][3:]) == name
 
 
 def gpu_info() -> tuple:

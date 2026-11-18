@@ -70,14 +70,16 @@ if shutil.which("ffmpeg") is None:
     subprocess.run(["apt-get", "-qq", "update"], check=True)
     subprocess.run(["apt-get", "-qq", "install", "-y", "ffmpeg"], check=True)
 
+# the gpu extra brings the CUDA 12 libraries faster-whisper needs (Colab's own CUDA may be another version)
+EXTRAS = "asr,gpu,vision" if globals().get("HAS_GPU", False) else "asr,vision"
 LOCAL_SRC = os.environ.get("STREAMCLIPPER_LOCAL_SRC", "")  # tests only: install from a local checkout
 if LOCAL_SRC:
     project = Path("/tmp/streamclipper_src")
     shutil.rmtree(project, ignore_errors=True)
     shutil.copytree(LOCAL_SRC, project, ignore=shutil.ignore_patterns(".agents", ".git", "__pycache__"))
-    target = f"{project}[asr,vision]"
+    target = f"{project}[{EXTRAS}]"
 elif install_from == "github":
-    target = f"streamclipper[asr,vision] @ git+{github_repo}"
+    target = f"streamclipper[{EXTRAS}] @ git+{github_repo}"
 else:
     if (
         drive_zip_path.startswith("/content/drive")
@@ -91,9 +93,14 @@ else:
     with zipfile.ZipFile(drive_zip_path) as zf:
         zf.extractall(src_dir)
     project = next(p.parent for p in src_dir.rglob("pyproject.toml"))
-    target = f"{project}[asr,vision]"
-subprocess.run([sys.executable, "-m", "pip", "install", "-q", target], check=True)
-subprocess.run(["streamclipper", "doctor"])
+    target = f"{project}[{EXTRAS}]"
+print("Installing", target, "...")
+pip = subprocess.run([sys.executable, "-m", "pip", "install", "-q", target], capture_output=True, text=True)
+if pip.returncode != 0:  # a notebook does not show the output of a child process: print it
+    print(pip.stdout[-4000:], pip.stderr[-4000:])
+    raise RuntimeError("pip install failed: see the lines above")
+doctor = subprocess.run(["streamclipper", "doctor"], capture_output=True, text=True)
+print(doctor.stdout, doctor.stderr)
 """
 
 CELL_OLLAMA = """#@title 3. Optional: local LLM for titles, hooks and hashtags (needs the T4 GPU)
@@ -191,35 +198,40 @@ from streamclipper.colab import drive_out_dir, run_pipeline
 from streamclipper.drive_share import share_run
 from streamclipper.util import ToolError
 
-OUT_DIR = drive_out_dir(output_folder)
-try:
-    result = run_pipeline(
-        source=source,
-        out_dir=str(OUT_DIR),
-        preset=preset,
-        caption_style=caption_style,
-        hook_style=hook_style,
-        min_score=min_score,
-        max_clips=max_clips,
-        ratio=ratio,
-        llm=LLM,
-        llm_model=globals().get("llm_model", "") if LLM == "ollama" else "",
-        render=True,
-        drafts=make_drafts,
-        cookies=cookies_path,
-        resume=True,
-        hud=hud,
-        zoom=zoom,
-        remove_fillers=remove_fillers,
-        enhance_speech=enhance_speech,
-    )
-    if result and share_on_drive:
-        share_run(result)
-except ToolError as e:
+_missing = [cell for cell, name in (("5", "source"), ("6", "LLM")) if name not in globals()]
+if _missing:
     result = None
-    print("ERROR:", e)
-    if e.hint:
-        print("Fix:", e.hint)
+    print(f"Run cell {' and '.join(_missing)} first, then run this cell again.")
+else:
+    OUT_DIR = drive_out_dir(output_folder)
+    try:
+        result = run_pipeline(
+            source=source,
+            out_dir=str(OUT_DIR),
+            preset=preset,
+            caption_style=caption_style,
+            hook_style=hook_style,
+            min_score=min_score,
+            max_clips=max_clips,
+            ratio=ratio,
+            llm=LLM,
+            llm_model=globals().get("llm_model", "") if LLM == "ollama" else "",
+            render=True,
+            drafts=make_drafts,
+            cookies=cookies_path,
+            resume=True,
+            hud=hud,
+            zoom=zoom,
+            remove_fillers=remove_fillers,
+            enhance_speech=enhance_speech,
+        )
+        if result and share_on_drive:
+            share_run(result)
+    except ToolError as e:
+        result = None
+        print("ERROR:", e)
+        if e.hint:
+            print("Fix:", e.hint)
 """
 
 CELL_RESULTS = """#@title 8. Results and previews of the top 3 clips

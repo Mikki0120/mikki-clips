@@ -578,6 +578,8 @@ def hook_capcut_fields(hook_style: str) -> dict:
 
 MIN_WORD_SLOT = 0.12  # a word on screen for less than this (s) cannot be read: it joins the next word's caption
 _MERGE_MAX_CHARS = 14
+_MERGE_MAX_CHARS_SAME = 28  # words at one instant: longer token, the caption wraps at its spaces
+_SAME_INSTANT = 0.04
 
 
 def _merge_short_words(words: list) -> list:
@@ -593,7 +595,11 @@ def _merge_short_words(words: list) -> list:
         while i + 1 < len(words):
             nxt = words[i + 1]
             short = nxt["rel_s"] - cur["rel_s"] < MIN_WORD_SLOT and nxt["rel_s"] - cur["rel_e"] < 0.18
-            if not short or len(cur["w"]) + 1 + len(nxt["w"]) > _MERGE_MAX_CHARS:
+            # words Whisper put at the same instant ("we" "are" "heading" "to" all at 17.88) must share one
+            # caption: a split there gives a caption of zero length that is never shown
+            same = nxt["rel_s"] - cur["rel_s"] < _SAME_INSTANT
+            limit = _MERGE_MAX_CHARS_SAME if same else _MERGE_MAX_CHARS
+            if not short or len(cur["w"]) + 1 + len(nxt["w"]) > limit:
                 break
             em = nxt.get("emoji") or cur.get("emoji")
             cur = {

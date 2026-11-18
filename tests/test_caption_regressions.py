@@ -67,6 +67,28 @@ def test_h2_a_word_followed_within_50_ms_is_not_dropped(tmp_path, style):
     assert st == "PASS", detail
 
 
+@pytest.mark.parametrize("style", ["beast-bold", "bold-pop", "word-by-word", "karaoke-highlight"])
+def test_h13_many_words_at_one_instant_share_a_visible_caption(tmp_path, style):
+    # Linux/Colab-style clip end (Docker ubuntu:22.04 run): Whisper put "we are heading" and "to" at 17.88 and
+    # "the bank now." at 18.0; the 14-char merge cap split them and gave "we are heading" a 0 s caption
+    words = [
+        {"w": "insane.", "s": 7.34, "e": 7.66},
+        {"w": "Ok", "s": 7.66, "e": 7.68},
+        {"w": "so", "s": 7.68, "e": 7.88},
+        {"w": "we", "s": 7.88, "e": 7.88},
+        {"w": "are", "s": 7.88, "e": 7.88},
+        {"w": "heading", "s": 7.88, "e": 7.88},
+        {"w": "to", "s": 7.88, "e": 8.0},
+        {"w": "the", "s": 8.0, "e": 8.0},
+        {"w": "bank", "s": 8.0, "e": 8.0},
+        {"w": "now.", "s": 8.0, "e": 8.0},
+    ]
+    caps, (st, detail) = _coverage(words, style, tmp_path)
+    assert "HEADING" in _shown(caps)
+    assert all(c["tl_end"] - c["tl_start"] > 0.05 for c in caps if not c.get("capcut_only"))
+    assert st == "PASS", detail
+
+
 def test_h11_words_only_the_no_vad_pass_hears_are_merged():
     # audit: a shouted line kept 0 words in the stream pass; the no-VAD pass heard it with p >= 0.5
     words = [{"w": "okay", "s": 1.0, "e": 1.3}, {"w": "go", "s": 4.0, "e": 4.2}]

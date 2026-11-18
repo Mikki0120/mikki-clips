@@ -68,3 +68,23 @@ def test_open_existing_records_rendered(tmp_path):
     s = RunState.open_existing(p)
     s.mark_rendered(1, "clip_01_2")
     assert json.loads(p.read_text(encoding="utf-8"))["rendered"] == {"1": "clip_01_2"}
+
+
+def test_made_clip_is_reused_only_with_the_same_settings_and_files(tmp_path):
+    # Colab re-run after a disconnect: finished clips are kept instead of being made again as clip_01_2
+    from argparse import Namespace
+
+    from streamclipper.commands import _made_before
+
+    s = RunState(tmp_path / "state.json", "file:a", ST)
+    s.mark_rendered(1, "clip_01", key="k1")
+    args = Namespace(render=True, no_draft=True, draft_root="")
+    assert _made_before(s, 1, "k1", tmp_path, args) is None  # files missing
+    (tmp_path / "clip_01.clip.json").write_text(json.dumps({"name": "clip_01"}), encoding="utf-8")
+    (tmp_path / "clip_01.mp4").write_bytes(b"x")
+    (tmp_path / "clip_01.gate.json").write_text(json.dumps({"pass": True}), encoding="utf-8")
+    assert _made_before(s, 1, "k1", tmp_path, args) == ({"name": "clip_01"}, True)
+    assert _made_before(s, 1, "other-style", tmp_path, args) is None  # settings changed: make it again
+    assert _made_before(s, 2, "k1", tmp_path, args) is None
+    again = RunState(tmp_path / "state.json", "file:a", ST)
+    assert again.made(1, "k1") == "clip_01" and again.made(1, "") == ""

@@ -117,3 +117,25 @@ def test_live_run_keeps_the_buffer_local_and_copies_only_results(tmp_path, monke
     assert colab.sync_live_outputs(work, drive) == []  # unchanged files are not copied again
     (work / "clips.json").write_bytes(b"updated after clip 2")
     assert colab.sync_live_outputs(work, drive) == ["clips.json"]
+
+
+def test_linux_cuda_libraries_of_the_gpu_extra_are_preloaded(tmp_path, monkeypatch):
+    # real Colab T4 run (Nov 2026 image): "Library libcublas.so.12 is not found" -> Whisper fell back to the CPU
+    from streamclipper import env
+
+    for sub, name in (("cublas", "libcublasLt.so.12"), ("cublas", "libcublas.so.12"), ("cudnn", "libcudnn.so.9")):
+        d = tmp_path / "nvidia" / sub / "lib"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / name).write_bytes(b"")
+    monkeypatch.setattr(env, "_system_has_lib", lambda name: False)
+    loaded = []
+    used = env.preload_linux_cuda([str(tmp_path / "missing"), str(tmp_path)], cdll=loaded.append)
+    assert [p.rsplit("/", 1)[-1].rsplit("\\", 1)[-1] for p in loaded] == [
+        "libcublasLt.so.12",
+        "libcublas.so.12",
+        "libcudnn.so.9",
+    ]
+    assert len(used) == 2
+    monkeypatch.setattr(env, "_system_has_lib", lambda name: True)  # the system CUDA 12 wins
+    loaded.clear()
+    assert env.preload_linux_cuda([str(tmp_path)], cdll=loaded.append) == [] and loaded == []

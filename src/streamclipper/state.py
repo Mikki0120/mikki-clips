@@ -108,6 +108,13 @@ class RunState:
             self.stages["asr_chunks"].sort()
         self.save()
 
-    def mark_rendered(self, rank, name: str) -> None:
+    def mark_rendered(self, rank, name: str, key: str = "") -> None:
         self.data["rendered"][str(rank)] = name
+        if key:
+            self.data.setdefault("made_keys", {})[str(rank)] = key
         self.save()
+
+    def made(self, rank, key: str) -> str:
+        """The name of the clip made for `rank` with the same make settings (key), or '."""
+        name = self.data.get("rendered", {}).get(str(rank), "")
+        return name if name and key and self.data.get("made_keys", {}).get(str(rank)) == key else ""

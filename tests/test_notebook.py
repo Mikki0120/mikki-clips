@@ -54,7 +54,7 @@ def test_drive_is_optional_and_drive_links_are_opt_in():
     assert 'share_on_drive = False  #@param {type:"boolean"}' in src
     assert "Drive access stays inside your own Google account. StreamClipper has no server." in cells[0]
     assert "Anyone with the link can see the clip." in src
-    assert "if result and share_on_drive:\n        share_run(result)" in src
+    assert "if result and share_on_drive:\n            share_run(result)" in src
     out = next(c for c in cells if c.startswith("#@title 9."))
     assert (
         "zip_outputs(" in out and "if is_colab():" in out and out.index("if is_colab():") < out.index("files.download(")
@@ -65,7 +65,9 @@ def test_drive_is_optional_and_drive_links_are_opt_in():
 def test_53_options_and_vision_install():
     cells = [c.source for c in _nb().cells]
     install = next(c for c in cells if c.startswith("#@title 2."))
-    assert install.count("[asr,vision]") == 3 and "[asr]" not in install
+    assert install.count("[{EXTRAS}]") == 3 and "[asr]" not in install
+    assert 'EXTRAS = "asr,gpu,vision" if globals().get("HAS_GPU", False) else "asr,vision"' in install
+    assert "capture_output=True" in install and "print(doctor.stdout, doctor.stderr)" in install
     opts = next(c for c in cells if c.startswith("#@title 6."))
     assert 'hud = "auto"  #@param ["auto", "off", "gta5", "gta6", "generic"]' in opts
     assert 'zoom = "off"  #@param ["off", "light", "medium", "strong"]' in opts
@@ -74,6 +76,7 @@ def test_53_options_and_vision_install():
     run = next(c for c in cells if c.startswith("#@title 7."))
     for kw in ("hud=hud", "zoom=zoom", "remove_fillers=remove_fillers", "enhance_speech=enhance_speech"):
         assert kw in run
+    assert "first, then run this cell again." in run  # no NameError when cells 5/6 were skipped
     assert "Publishing to YouTube Shorts or Instagram Reels runs from your PC" in cells[0]
 
 
