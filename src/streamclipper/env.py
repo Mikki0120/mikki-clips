@@ -500,14 +500,31 @@ def doctor_checks(env: dict, assets: dict) -> list:
         from importlib.metadata import PackageNotFoundError
         from importlib.metadata import version as _ver
 
-        cv = "installed"
-        for dist in ("opencv-python-headless", "opencv-python", "opencv-contrib-python"):
+        found = []
+        for dist in (
+            "opencv-python-headless",
+            "opencv-python",
+            "opencv-contrib-python",
+            "opencv-contrib-python-headless",
+        ):
             try:
-                cv = _ver(dist)
-                break
+                found.append((dist, _ver(dist)))
             except PackageNotFoundError:
                 continue
-        rows.append(("OpenCV (face detection)", ok, cv, ""))
+        cv = ", ".join(f"{d} {v}" for d, v in found) or "installed"
+        if len(found) > 1:  # each wheel ships its own cv2 folder: the last one installed overwrites the others
+            keep = "opencv-contrib-python" if any(d == "opencv-contrib-python" for d, _ in found) else found[0][0]
+            others = " ".join(d for d, _ in found if d != keep)
+            rows.append(
+                (
+                    "OpenCV (face detection)",
+                    warn,
+                    f"{len(found)} OpenCV packages installed ({cv}); they overwrite each other's cv2",
+                    f"python -m pip uninstall -y {others} && python -m pip install --force-reinstall {keep}",
+                )
+            )
+        else:
+            rows.append(("OpenCV (face detection)", ok, cv, ""))
     else:
         rows.append(
             (
@@ -517,6 +534,13 @@ def doctor_checks(env: dict, assets: dict) -> list:
                 'python -m pip install -e ".[vision]"',
             )
         )
+    from streamclipper.faces import detector_status
+
+    fd_name, fd_detail = detector_status()
+    if fd_name == "MediaPipe":
+        rows.append(("face detector", ok, f"{fd_name}: {fd_detail}", ""))
+    else:
+        rows.append(("face detector", warn, f"{fd_name}: {fd_detail}", 'python -m pip install -e ".[vision]"'))
 
     if importlib.util.find_spec("numpy") is not None:
         try:

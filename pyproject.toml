@@ -29,7 +29,10 @@ gpu = [
     "nvidia-cublas-cu12; sys_platform != 'darwin' and (platform_machine == 'AMD64' or platform_machine == 'x86_64')",
     "nvidia-cudnn-cu12==9.*; sys_platform != 'darwin' and (platform_machine == 'AMD64' or platform_machine == 'x86_64')",
 ]
-vision = ["opencv-python-headless>=4.8,<5"]  # 5.x dropped the Haar cascades
+# mediapipe pulls opencv-contrib-python, which keeps the Haar cascades used as the fallback.
+vision = ["mediapipe>=1.2,<2", "onnxruntime>=1.17"]
+# For platforms without mediapipe wheels: Haar face detection only (5.x dropped the cascades).
+vision-haar = ["opencv-python-headless>=4.8,<5"]
 dev = ["pytest>=7", "ruff>=0.5", "nbformat>=5", "pyyaml>=6"]
 
 [project.urls]

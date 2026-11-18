@@ -9,6 +9,7 @@ from pathlib import Path
 
 from streamclipper.audio import measure_loudness
 from streamclipper.captions.ass import build_ass
+from streamclipper.captions.coverage import spoken_words_tl
 from streamclipper.captions.styles import FONT_FILES
 from streamclipper.env import _first_line
 from streamclipper.layout import apply_caption_anchor, layout_boxes, probe_video
@@ -285,6 +286,7 @@ def render_plan_mp4(plan: dict, out_mp4: Path) -> Path:
         if (TEMPLATE_DIR / "fonts" / fn).is_file() and not (fdir / fn).is_file():
             shutil.copy2(TEMPLATE_DIR / "fonts" / fn, fdir / fn)
     cap_info = build_ass(plan, lay, rdir / "clip.ass", fdir)
+    cap_info["words_tl"] = spoken_words_tl(plan)  # the export gate's caption_coverage row
 
     def lane_input(L, path):
         lane = lanes[L]

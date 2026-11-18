@@ -1,41 +1,23 @@
-"""Face-based layout detection (OpenCV Haar cascades; optional: pip install -e .[vision])."""
+"""Face-based layout detection (MediaPipe BlazeFace, Haar fallback: see faces.py; pip install -e .[vision])."""
 
 from pathlib import Path
 
+from streamclipper import faces as _faces
 from streamclipper.audio import _np
 from streamclipper.util import run_cmd
 
 SAMPLES = 8
-GRAB_W = 640  # frames are scaled to this width before detection
 FULL_FACE_H = 0.18  # face height (fraction of the frame) that means a full-screen cam
 CORNER_MIN_HITS = 5  # of SAMPLES frames
 MAX_MOVE = 0.08  # corner face centre may move at most this much of the frame width between samples
 
-_CASCADES = []
+
+def _detector():
+    """The face detector backend (faces.get_detector), or None: callers then keep their old fallbacks."""
+    return _faces.get_detector()
 
 
-def _cv2():
-    """cv2 with Haar cascades, or None (not installed, or OpenCV 5 without cascades)."""
-    try:
-        import cv2
-    except ImportError:
-        return None
-    if not hasattr(cv2, "CascadeClassifier") or not hasattr(cv2, "data"):
-        return None
-    return cv2
-
-
-def _cascades(cv2):
-    if not _CASCADES:
-        base = Path(cv2.data.haarcascades)
-        for name in ("haarcascade_frontalface_default.xml", "haarcascade_profileface.xml"):
-            c = cv2.CascadeClassifier(str(base / name))
-            if not c.empty():
-                _CASCADES.append(c)
-    return _CASCADES
-
-
-def _grab_gray(video: Path, t: float, w: int, h: int, crop: tuple = None):
+def _grab_rgb(video: Path, t: float, w: int, h: int, crop: tuple = None):
     np = _np()
     res = run_cmd(
         [
@@ -50,7 +32,7 @@ def _grab_gray(video: Path, t: float, w: int, h: int, crop: tuple = None):
             "-frames:v",
             "1",
             "-vf",
-            (f"crop={crop[2]}:{crop[3]}:{crop[0]}:{crop[1]}," if crop else "") + f"scale={w}:{h},format=gray",
+            (f"crop={crop[2]}:{crop[3]}:{crop[0]}:{crop[1]}," if crop else "") + f"scale={w}:{h},format=rgb24",
             "-f",
             "rawvideo",
             "-",
@@ -60,44 +42,42 @@ def _grab_gray(video: Path, t: float, w: int, h: int, crop: tuple = None):
         check=False,
     )
     buf = res.stdout or b""
-    if len(buf) < w * h:
+    if len(buf) < w * h * 3:
         return None
-    return np.frombuffer(buf[: w * h], np.uint8).reshape(h, w)
+    return np.frombuffer(buf[: w * h * 3], np.uint8).reshape(h, w, 3)
+
+
+def _grab_size(det, vw: int, vh: int) -> tuple:
+    w = det.grab_w
+    return w, max(2, int(round(w * vh / max(1, vw) / 2)) * 2)
 
 
 def detect_faces(video: Path, times: list, vw: int = 1920, vh: int = 1080, crop: tuple = None):
     """
-    Faces per sample time as normalised boxes [x0, y0, x1, y1] (largest first), or None when OpenCV
-    is not available (callers then keep the skin-colour heuristic). Frontal + profile (and mirrored
-    profile) Haar cascades on a 640 px wide grey frame (or of the pixel box crop=(x, y, w, h); vw/vh are
-    then the crop size). The grey frames are kept on detect_faces.frames (edge snapping, dark share).
+    Faces per sample time as normalised boxes [x0, y0, x1, y1] (largest first), or None when no face
+    detector is installed (callers then keep the skin-colour heuristic). MediaPipe BlazeFace on a 960 px
+    frame plus tiles, or the Haar cascades on 640 px (faces.get_detector), of the whole frame or of the
+    pixel box crop=(x, y, w, h) (vw/vh are then the crop size). The grey frames are kept on
+    detect_faces.frames (edge snapping, dark share), the full detections (score, keypoints) on
+    detect_faces.detections.
     """
-    cv2 = _cv2()
-    if cv2 is None:
+    det = _detector()
+    if det is None:
         return None
-    cascades = _cascades(cv2)
-    if not cascades:
-        return None
-    w = GRAB_W
-    h = max(2, int(round(w * vh / max(1, vw) / 2)) * 2)
-    min_side = max(16, int(h * 0.05))
-    out, frames = [], []
+    w, h = _grab_size(det, vw, vh)
+    out, frames, dets = [], [], []
     for t in times:
-        img = _grab_gray(video, t, w, h, crop)
+        img = _grab_rgb(video, t, w, h, crop)
         if img is None:
             out.append([])
+            dets.append([])
             continue
-        frames.append(img)
-        img = cv2.equalizeHist(img)
-        found = []
-        for k, c in enumerate(cascades):
-            views = [(img, False)] + ([(cv2.flip(img, 1), True)] if k == 1 else [])
-            for im, flipped in views:
-                for x, y, fw, fh in c.detectMultiScale(im, 1.1, 6, minSize=(min_side, min_side)):
-                    x0 = (w - x - fw) if flipped else x
-                    found.append([x0 / w, y / h, (x0 + fw) / w, (y + fh) / h])
-        out.append(_dedupe(found))
+        frames.append(_faces.to_gray(img))
+        found = det.detect(img)
+        dets.append(found)
+        out.append([d["box"] for d in found])
     detect_faces.frames = frames
+    detect_faces.detections = dets
     return out
 
 
@@ -135,16 +115,16 @@ def scene_cuts(video: Path, start: float, end: float, threshold: float = 0.15) -
 
 def track_faces(video: Path, start: float, end: float, step: float = 0.5, vw: int = 1920, vh: int = 1080):
     """
-    Faces every `step` seconds in [start, end] for the speaker layout, or None without OpenCV:
-    {times, faces (normalised boxes per sample, largest first), frames (640 px grey), cuts (scene cuts)}.
-    One ffmpeg decode for all samples; frontal + profile Haar cascades as in detect_faces.
+    Faces every `step` seconds in [start, end] for the speaker layout, or None without a face detector:
+    {times, faces (normalised boxes per sample, largest first), mouths (BlazeFace mouth keypoint per box,
+    None with Haar), frames (grey, the detector's grab size), cuts (scene cuts), detector}.
+    One ffmpeg decode for all samples; the backend of detect_faces.
     """
-    cv2 = _cv2()
-    if cv2 is None or not _cascades(cv2):
+    det = _detector()
+    if det is None:
         return None
     np = _np()
-    w = GRAB_W
-    h = max(2, int(round(w * vh / max(1, vw) / 2)) * 2)
+    w, h = _grab_size(det, vw, vh)
     res = run_cmd(
         [
             "ffmpeg",
@@ -159,7 +139,7 @@ def track_faces(video: Path, start: float, end: float, step: float = 0.5, vw: in
             str(video),
             "-an",
             "-vf",
-            f"fps=1/{step},scale={w}:{h},format=gray",
+            f"fps=1/{step},scale={w}:{h},format=rgb24",
             "-f",
             "rawvideo",
             "-",
@@ -168,22 +148,24 @@ def track_faces(video: Path, start: float, end: float, step: float = 0.5, vw: in
         binary=True,
     )
     raw = res.stdout or b""
-    n = len(raw) // (w * h)
-    frames = [np.frombuffer(raw[k * w * h : (k + 1) * w * h], np.uint8).reshape(h, w) for k in range(n)]
-    min_side = max(16, int(h * 0.05))
-    faces = []
-    for img in frames:
-        eq = cv2.equalizeHist(img)
-        found = []
-        for k, c in enumerate(_cascades(cv2)):
-            views = [(eq, False)] + ([(cv2.flip(eq, 1), True)] if k == 1 else [])
-            for im, flipped in views:
-                for x, y, fw, fh in c.detectMultiScale(im, 1.1, 6, minSize=(min_side, min_side)):
-                    x0 = (w - x - fw) if flipped else x
-                    found.append([x0 / w, y / h, (x0 + fw) / w, (y + fh) / h])
-        faces.append(_dedupe(found))
+    fs = w * h * 3
+    n = len(raw) // fs
+    faces, mouths, frames = [], [], []
+    for k in range(n):
+        rgb = np.frombuffer(raw[k * fs : (k + 1) * fs], np.uint8).reshape(h, w, 3)
+        found = det.detect(rgb)
+        frames.append(_faces.to_gray(rgb))
+        faces.append([d["box"] for d in found])
+        mouths.append([(d.get("keypoints") or {}).get("mouth") for d in found])
     times = [round(start + k * step, 3) for k in range(n)]
-    return {"times": times, "faces": faces, "frames": frames, "cuts": scene_cuts(video, start, end)}
+    return {
+        "times": times,
+        "faces": faces,
+        "mouths": mouths,
+        "frames": frames,
+        "cuts": scene_cuts(video, start, end),
+        "detector": det.name,
+    }
 
 
 def mouth_motion(frames: list, boxes: list) -> float:
@@ -212,15 +194,6 @@ def _iou(a, b) -> float:
     inter = ix * iy
     ua = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
     return inter / ua if ua > 0 else 0.0
-
-
-def _dedupe(boxes: list) -> list:
-    boxes = sorted(boxes, key=lambda b: -(b[2] - b[0]) * (b[3] - b[1]))
-    keep = []
-    for b in boxes:
-        if all(_iou(b, k) < 0.3 for k in keep):
-            keep.append([round(v, 4) for v in b])
-    return keep
 
 
 def _corner(cx: float, cy: float):
@@ -368,8 +341,12 @@ def classify_layout(video: Path, start: float, end: float, vw: int = 1920, vh: i
     if res["dark"] >= 0.5:
         res.update(kind="blank", face_box=None)
     if res["kind"] == "corner-cam":
-        box = pad_cam_box(res["face_box"], res["corner"])
-        res["cam_box"] = snap_to_overlay(box, res["corner"], frames, res["face_box"]) if frames else box
+        face = res["face_box"]
+        if getattr(_detector(), "name", "") == "MediaPipe":
+            # the cam padding was calibrated on Haar boxes; BlazeFace boxes are ~0.78x their size (brow to chin)
+            face = _faces.haar_sized(face)
+        box = pad_cam_box(face, res["corner"])
+        res["cam_box"] = snap_to_overlay(box, res["corner"], frames, face) if frames else box
     return res
 
 

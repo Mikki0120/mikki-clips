@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 
 from streamclipper.audio import _np
+from streamclipper.captions.coverage import coverage_row
 from streamclipper.render import ebur128_summary, mp4_faststart, render_plan_mp4
 from streamclipper.state import write_json_atomic
 from streamclipper.thumbs import make_thumbnail
@@ -156,10 +157,12 @@ def gate_mp4(path: Path, timeline_json: Path = None) -> list:
         return rows
     exp = float(tl["expected_duration"])
     row("duration", abs(dur - exp) <= 0.1, f"{dur:.3f}s vs timeline {exp:.3f}s (max diff 0.1)")
-    st, detail = check_captions_off_faces(path, tl) or ("N/A", "OpenCV not installed")
+    st, detail = coverage_row(tl.get("caption") or {})
+    row("caption_coverage", st != "FAIL", detail, st)
+    st, detail = check_captions_off_faces(path, tl) or ("N/A", "no face detector installed")
     row("captions_off_face", st != "FAIL", detail, st)
     if str(tl.get("layout") or "").startswith("speaker"):
-        st, detail = check_speaker_faces(path, dur) or ("N/A", "OpenCV not installed")
+        st, detail = check_speaker_faces(path, dur) or ("N/A", "no face detector installed")
         row("faces_whole", st != "FAIL", detail, st)
     cam = (tl.get("rects") or {}).get("cam")
     if not cam:
@@ -199,12 +202,13 @@ def gate_mp4(path: Path, timeline_json: Path = None) -> list:
     if main:
         st, detail = check_panel_black(path, main)
         row("gameplay_black", st == "PASS", detail, st)
-        st, detail = check_panel_faces(path, main, dur) or ("N/A", "OpenCV not installed")
+        st, detail = check_panel_faces(path, main, dur) or ("N/A", "no face detector installed")
         row("gameplay_no_face", st != "FAIL", detail, st)
     return rows
 
 
 CAPTION_FACE_MIN_H = 0.08  # faces smaller than this share of the canvas height (154 px) are stray detections
+CAPTION_FACE_REL_H = 0.5  # ... and so are faces under half the height of the biggest face in the same frame
 
 
 def caption_boxes(tl: dict) -> list:
@@ -297,6 +301,9 @@ def check_captions_off_faces(mp4: Path, tl: dict, samples: int = 8):
                 box = [rx + x0 * rw, ry + y0 * rh, rx + x1 * rw, ry + y1 * rh]
                 if box[3] - box[1] >= CAPTION_FACE_MIN_H * H:
                     found[i].append(box)
+    for i, fl in enumerate(found):  # a poster or a TV face behind the streamer is not a face to keep clear
+        big = max((b[3] - b[1] for b in fl), default=0.0)
+        found[i] = [b for b in fl if b[3] - b[1] >= CAPTION_FACE_REL_H * big]
     hit = []
     for t, faces in zip(times, found, strict=True):
         shown = [b for b in boxes if b[0] <= t < b[1]]

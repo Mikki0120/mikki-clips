@@ -103,7 +103,7 @@ def test_no_cv2_falls_back_to_skin_heuristic(monkeypatch):
     import streamclipper.options as options
     import streamclipper.vision as vision
 
-    monkeypatch.setattr(vision, "_cv2", lambda: None)
+    monkeypatch.setattr(vision, "_detector", lambda: None)  # neither MediaPipe nor OpenCV installed
     assert vision.detect_faces("x.mp4", [1.0]) is None
     assert vision.classify_layout("x.mp4", 0, 5) is None
     monkeypatch.setattr(
@@ -279,3 +279,28 @@ def test_speaker_no_face_shows_whole_frame_and_captions_avoid_faces():
     for name in ("speaker", "speaker-seam"):
         lay = layout_boxes("9:16", name)
         assert lay["rects"] == {"main": [0, 0, 1080, 1920]}
+
+
+def test_speaker_switch_follows_the_active_talker_after_a_lead_and_splits_on_a_frame():
+    import numpy as np
+
+    from streamclipper.layout import speaker_shots
+
+    a, b = _box(0.2, 0.3, 0.2), _box(0.8, 0.5, 0.3)  # different size and height: not a stacked pair
+    tr = _track(lambda k: [b, a])
+    rng = np.random.default_rng(53)
+    frames = []
+    for k in range(len(tr["times"])):
+        f = np.zeros((540, 960), np.uint8)
+        x0, y0, x1, y1 = a if k < 10 else b  # A talks for 5 s, then B
+        r0, r1, c0, c1 = int((y0 + 0.6 * (y1 - y0)) * 540), int(y1 * 540), int(x0 * 960), int(x1 * 960)
+        f[r0:r1, c0:c1] = rng.integers(0, 255, (r1 - r0, c1 - c0))
+        frames.append(f)
+    tr["frames"] = frames
+    shots = speaker_shots(tr, 10.0, 1920, 1080, 30.0)
+    assert [s["mode"] for s in shots] == ["single", "single"]
+    # the 5.0 s sample differs in both mouths (A stops, B starts), so B leads from 5.5 s; the switch waits 1.0 s
+    assert shots[0]["f1"] == shots[1]["f0"] == 195
+    assert shots[0]["faces_out"][0][0] < shots[1]["faces_out"][0][0] or shots[0]["path"] != shots[1]["path"]
+    silent = speaker_shots(tr, 10.0, 1920, 1080, 30.0, spans=[(0.0, 5.0)])  # nobody talks after 5 s
+    assert len(silent) == 1

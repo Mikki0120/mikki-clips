@@ -6,7 +6,7 @@ import math
 from pathlib import Path
 
 from streamclipper import reframe
-from streamclipper.asr import read_wav16k
+from streamclipper.asr import read_wav16k, rescue_words
 from streamclipper.audio import (
     _mmss,
     audio_envelope,
@@ -41,6 +41,7 @@ from streamclipper.download import download_audio, download_slice, fetch_chat, y
 from streamclipper.draft.rootmeta import RENDER_SUFFIXES, unique_output_name
 from streamclipper.draft.writer import build_from_spec_dict, guard_capcut, resolve_draft_root
 from streamclipper.env import detect_env, doctor_checks, ensure_bundled_assets, find_capcut_local
+from streamclipper.faces import speech_spans
 from streamclipper.gate import _gate_summary, render_and_gate
 from streamclipper.layout import (
     black_frames,
@@ -251,6 +252,8 @@ def build_high_level_clip(spec: dict, base_dir: Path, args) -> dict:
         piece_words = reframe.assign_words(norm["words"], pieces)
     else:
         rsegs = None
+        if opts.get("layout") == "speaker" and norm["words"]:  # the speaker panel covers the source from 0 s
+            opts = dict(opts, speech_spans=speech_spans(norm["words"]))
         panels = render_layout_panels(src, meta, opts, cam_box, game_box, ws, we - ws, work_dir / "panels")
         panels = with_caption_anchor(panels, anchor, opts["ratio"])
         pieces = [(start, end)]
@@ -386,6 +389,14 @@ def clip_stream(args) -> dict:
         )
     boxes = {}  # filled once when --cam-crop is given; otherwise every clip detects its own layout
     hook_override = (args.hook_text or "").replace("\\n", "\n")
+    asr = None
+    if res.get("transcribed") and res.get("asr") in ("full", "regions"):
+        asr = {
+            "model": st.get("whisper_model") or "auto",
+            "device": st.get("device") or "auto",
+            "language": res.get("language"),
+            "duration": res.get("duration"),
+        }
     results, plans = [], []
     # a clip that cannot be made clean (blank screen) is skipped and the next one in clips.json is used
     for idx, clip in enumerate(res["clips"]):
@@ -411,6 +422,7 @@ def clip_stream(args) -> dict:
                 close_capcut=args.close_capcut,
                 no_draft=args.no_draft,
                 portable=getattr(args, "portable_drafts", False),
+                asr=asr,
             )
         except SkipClip as e:
             print(f"Clip rank {clip['rank']} ({_mmss(clip['start'])}-{_mmss(clip['end'])}) skipped: {e}")
@@ -447,11 +459,13 @@ def make_stream_clip(
     close_capcut: bool = False,
     no_draft: bool = True,
     portable: bool = False,
+    asr: dict = None,
 ) -> dict:
     """
     One discovered clip -> window file -> layout panels -> timeline (hook mode) -> CapCut draft
     (unless no_draft) + <name>.clip.json. The layout is detected per clip (vision.classify_layout);
-    boxes caches the --cam-crop boxes across clips.
+    boxes caches the --cam-crop boxes across clips. asr ({model, device, language, duration}, when the
+    stream was transcribed): the clip window gets a second Whisper pass without the VAD filter.
     """
     if not overwrite:
         name = unique_output_name(work_dir, proj_name, None if no_draft else resolve_draft_root(draft_root))
@@ -484,13 +498,17 @@ def make_stream_clip(
     if style != opts.get("caption_style"):
         opts = dict(opts, caption_style=style)
     clip["caption_style"] = style
+    words = clip.get("words") or []
+    if asr:
+        words = _rescue_clip_words(words, win_file, ws, wmeta["dur"], asr, work_dir / "analysis", idx)
+    if opts.get("layout") == "speaker" and words:  # the active speaker switches only while someone talks
+        opts = dict(opts, speech_spans=speech_spans(words, ws))
     panels = render_layout_panels(win_file, wmeta, opts, cam_box, game_box, None, None, work_dir / "panels")
     if panels.get("speaker_note"):
         print(f"Clip {idx + 1} {panels['speaker_note']}")
     if panels.get("caption_note"):
         print(f"Clip {idx + 1} {panels['caption_note']}")
     volume = loudness_gain(measure_loudness(Path(panels["main_src"])))
-    words = clip.get("words") or []
 
     def piece(a, b, kind):
         ws_in = [] if kind == "tease" else [w for w in words if w["e"] > a and w["s"] < b]
@@ -562,6 +580,20 @@ def make_stream_clip(
         f"volume x{volume} -> {fwd(plan_out)}"
     )
     return plan
+
+
+def _rescue_clip_words(words: list, win_file: Path, ws: float, win_dur: float, asr: dict, cache: Path, idx: int):
+    """Words (source s) + the words a no-VAD Whisper pass over the window file hears and the stream pass missed."""
+    wwords = [dict(w, s=w["s"] - ws, e=w["e"] - ws) for w in words]
+    try:
+        merged, added, secs = rescue_words(win_file, 0.0, win_dur, wwords, asr, cache)
+    except (ToolError, RuntimeError, OSError, ValueError) as e:
+        print(f"Clip {idx + 1} captions: second Whisper pass skipped ({str(e).splitlines()[0][:120]})")
+        return words
+    if not added:
+        return words
+    print(f"Clip {idx + 1} captions: +{added} words heard by a second Whisper pass without VAD ({secs:.1f}s)")
+    return [dict(w, s=round(w["s"] + ws, 3), e=round(w["e"] + ws, 3)) for w in merged]
 
 
 def cmd_render(args):

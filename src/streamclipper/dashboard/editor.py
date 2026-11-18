@@ -444,8 +444,19 @@ def auto_reframe(ctx: dict, form: dict, video: Path, edir: Path) -> dict:
             "Auto-reframe needs face detection (OpenCV).",
             'install the vision extra: pip install "streamclipper[vision]"',
         )
+    from streamclipper.faces import speech_spans
+
     out, note = reframe.propose_keys(
-        segs, track["times"], track["faces"], vw, vh, ratio, ctx.get("cam_px"), ctx["layouts"]["split"]["game"]
+        segs,
+        track["times"],
+        track["faces"],
+        vw,
+        vh,
+        ratio,
+        ctx.get("cam_px"),
+        ctx["layouts"]["split"]["game"],
+        track=track,
+        spans=speech_spans(ctx["words"]) if ctx.get("words") else None,  # switch only while someone talks
     )
     faces = [
         {"t": t, "box": [round(f[0][0] * vw), round(f[0][1] * vh), round(f[0][2] * vw), round(f[0][3] * vh)]}

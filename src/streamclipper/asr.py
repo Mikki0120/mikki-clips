@@ -396,3 +396,82 @@ def transcribe_full(
         "engine": engine,
     }
     return words, lang, summary
+
+
+# ---------------------------------------------------------------- caption rescue pass on a clip window
+
+RESCUE_MIN_PROB = 0.5  # rescued words below this Whisper probability are dropped (noise, game sound)
+RESCUE_MAX_WORD_S = 1.5  # without VAD Whisper sometimes stretches a word over seconds of noise
+_RESCUE_MODELS = {}
+
+
+def merge_rescued(words: list, heard: list, min_prob: float = RESCUE_MIN_PROB, pad: float = 0.05) -> tuple:
+    """
+    words + the words only the no-VAD pass heard: a heard word joins when its probability is >= min_prob, it
+    lasts <= 1.5 s, its midpoint is not inside a known word (+-pad) and known words cover < half of it.
+    Returns (merged words sorted by start, number added).
+    """
+    out, added = [dict(w) for w in words], 0
+    for h in heard:
+        if float(h.get("p", 1.0)) < min_prob or not str(h.get("w", "")).strip():
+            continue
+        hs, he = float(h["s"]), float(h["e"])
+        if he - hs > RESCUE_MAX_WORD_S:
+            continue
+        mid = (hs + he) / 2
+        if any(float(x["s"]) - pad <= mid <= float(x["e"]) + pad for x in out):
+            continue
+        overlap = sum(max(0.0, min(he, float(x["e"])) - max(hs, float(x["s"]))) for x in out)
+        if overlap > 0.5 * (he - hs):
+            continue
+        out.append({"w": h["w"], "s": round(float(h["s"]), 3), "e": round(float(h["e"]), 3)})
+        added += 1
+    out.sort(key=lambda w: w["s"])
+    return out, added
+
+
+def rescue_words(source: Path, a: float, b: float, words: list, asr: dict, cache_dir: Path) -> tuple:
+    """
+    Second pass over one clip window [a, b] (seconds in `source`): Whisper without its VAD filter, which drops
+    shouted or overlapped speech under game sound (measured: 0 of 13 words of a shouted line kept). Words
+    only this pass hears are merged into `words` (source seconds) by merge_rescued. asr: {model, device,
+    language, duration}. Cached per window in cache_dir. Returns (words, number added, seconds taken).
+    """
+    lang = asr.get("language")
+    lang = None if not lang or lang == "auto" else lang
+    model_name = asr.get("model") or "auto"
+    tag = file_tag(source, round(a, 2), round(b, 2), model_name, lang, "rescue1")
+    cache = Path(cache_dir) / f"asr_rescue_{tag}.json"
+    t0 = time.time()
+    if cache.is_file():
+        heard = json.loads(cache.read_text(encoding="utf-8"))["words"]
+    else:
+        key = (asr.get("device") or "auto", model_name)
+        if key not in _RESCUE_MODELS:
+            _RESCUE_MODELS[key] = load_model(key[0], float(asr.get("duration") or 0.0), model_name)
+        w = _RESCUE_MODELS[key]
+        wav = _extract_wav(Path(source), a, b, Path(cache_dir) / f"asr_rescue_{tag}.wav")
+        try:
+            segs, _ = w.model.transcribe(
+                read_wav16k(wav),
+                word_timestamps=True,
+                vad_filter=False,
+                condition_on_previous_text=False,
+                language=lang,
+            )
+            heard = [
+                {
+                    "w": x.word.strip(),
+                    "s": round(a + x.start, 3),
+                    "e": round(a + x.end, 3),
+                    "p": round(x.probability, 3),
+                }
+                for s in segs
+                for x in s.words or []
+                if x.word.strip()
+            ]
+        finally:
+            wav.unlink(missing_ok=True)
+        write_json_atomic(cache, {"words": heard})
+    merged, added = merge_rescued(words, heard)
+    return merged, added, round(time.time() - t0, 2)

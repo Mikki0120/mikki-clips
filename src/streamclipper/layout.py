@@ -6,6 +6,8 @@ import os
 import re
 from pathlib import Path
 
+from streamclipper.audio import _np
+from streamclipper.faces import mouth_box
 from streamclipper.util import ToolError, file_tag, fwd, require_tool, run_cmd
 
 
@@ -466,29 +468,30 @@ def _track_box(tr: dict) -> list:
 def follow_path(boxes: list, times: list, a: float, vw: int, vh: int, cw: int) -> list:
     """
     [(t, x)] keyframes (t relative to the shot start a) of a full-height crop of width cw px that keeps
-    the face (normalised boxes per sample, None = not found) inside: median of 3, then at most
-    SPEAKER_MAX_SPEED x the source width per second. A path that moves < 2% of the width is one keyframe.
+    the face (normalised boxes per sample, None = not found) inside: exponential smoothing with a dead zone
+    and at most SPEAKER_MAX_SPEED x the source width per second (faces.smooth_track). A path that moves
+    < 2% of the width is one keyframe.
     """
+    from streamclipper.faces import smooth_track
+
     known = [(t, b) for t, b in zip(times, boxes, strict=False) if b is not None]
     if not known:
         return [(0.0, (vw - cw) // 2 & ~1)]
     pad = 0.02 * vw
-    xs, ts = [], []
-    last = known[0][1]
-    for t, b in zip(times, boxes, strict=False):
+    ts = [t - a for t in times[: len(boxes)]]
+    targets, last = [], known[0][1]
+    for b in boxes[: len(ts)]:
         last = b or last
         fx0, fx1 = last[0] * vw, last[2] * vw
         x = (fx0 + fx1) / 2 - cw / 2
         lo, hi = fx1 + pad - cw, fx0 - pad  # x range that keeps the face inside
         if lo <= hi:
             x = min(max(x, lo), hi)
-        xs.append(min(max(0.0, x), vw - cw))
-        ts.append(t - a)
-    sm = [sorted(xs[max(0, i - 1) : i + 2])[len(xs[max(0, i - 1) : i + 2]) // 2] for i in range(len(xs))]
-    path = [sm[0]]
-    for i in range(1, len(sm)):
-        step = SPEAKER_MAX_SPEED * vw * max(0.0, ts[i] - ts[i - 1])
-        path.append(path[-1] + max(-step, min(step, sm[i] - path[-1])))
+        targets.append((min(max(0.0, x), vw - cw) + cw / 2) / vw if b is not None else None)
+    if targets[0] is None:  # the shot starts before the face is found: start where it is first seen
+        targets[0] = next(c for c in targets if c is not None)
+    centres = smooth_track(targets, ts, cw / vw, SPEAKER_MAX_SPEED)
+    path = [min(max(0.0, c * vw - cw / 2), vw - cw) for c in centres]
     if max(path) - min(path) < 0.02 * vw:
         mid = sorted(path)[len(path) // 2]
         return [(0.0, int(mid) & ~1)]
@@ -523,15 +526,17 @@ def _out_face(face: list, region: tuple, vw: int, vh: int, top: int, out_w: int,
     ]
 
 
-def speaker_shots(track: dict, dur: float, vw: int, vh: int, fps: float) -> list:
+def speaker_shots(track: dict, dur: float, vw: int, vh: int, fps: float, spans: list = None) -> list:
     """
     Shot plan for the speaker layout from vision.track_faces output (times/cuts in the panel file).
     Each shot: {f0, f1 (frame range), mode single|stack|fit, path [(t, x)] for single, regions
     [top, bottom] for stack, faces_out (canvas px boxes), why}. Two stable faces of similar size at
     about the same height that do not fit one 9:16 crop are stacked (left person on top); a pair that
-    fits one crop gets a crop centred on both; any other 2+ faces -> the face whose mouth moves most.
+    fits one crop gets a crop centred on both; any other 2+ faces -> the active speaker (faces.pick_speaker:
+    mouth motion, a switch only after a 1 s lead and never while nobody talks; spans = [(s, e)] speech in
+    panel time, None = always voiced). A switch splits the shot on an exact frame.
     """
-    from streamclipper.vision import mouth_motion
+    from streamclipper.faces import pick_speaker, voiced_at
 
     times, faces = track["times"], track["faces"]
     frames = track.get("frames") or []
@@ -605,23 +610,110 @@ def speaker_shots(track: dict, dur: float, vw: int, vh: int, fps: float) -> list
                         why="two faces side by side: stacked",
                     )
                 else:
-                    moves = [mouth_motion(frames, [t["boxes"].get(k) for k in range(len(frames))]) for t in stable]
-                    chosen = stable[max(range(len(stable)), key=lambda i: moves[i])]
+                    # active speaker per sample (mouth motion while someone talks), with hysteresis
+                    ts_idx = [times[k] for k in idx]
+                    scores = _mouth_scores(frames, stable, idx, faces, track.get("mouths"))
+                    who = pick_speaker(scores, ts_idx, voiced_at(ts_idx, spans) if spans is not None else None)
+                    runs = _runs(who)
                     why = f"{len(stable)} faces: active speaker (mouth motion)"
+                    if len(runs) > 1:
+                        g_prev = f0
+                        for r_i, (j, i0, i1) in enumerate(runs):
+                            g1 = f1 if r_i == len(runs) - 1 else min(f1, int(round(ts_idx[i1] * fps)))
+                            if g1 <= g_prev:
+                                continue
+                            sub = {"f0": g_prev, "f1": g1}
+                            sub.update(_follow_shot(stable[j], idx[i0:i1], times, g_prev / fps, vw, vh, cw, why))
+                            shots.append(sub)
+                            g_prev = g1
+                        prev = shots[-1]
+                        continue
+                    chosen = stable[runs[0][0]] if runs else stable[0]
             if "mode" not in shot:
-                boxes = [chosen["boxes"].get(k) for k in idx]
-                path = follow_path(boxes, [times[k] for k in idx], a, vw, vh, cw)
-                fb = _track_box(chosen)
-                x_mid = sorted(x for _, x in path)[len(path) // 2]
-                shot.update(
-                    mode="single",
-                    path=path,
-                    faces_out=[_out_face(fb, (cw, vh, x_mid, 0), vw, vh, 0, 1080, 1920)],
-                    why=why,
-                )
+                shot.update(_follow_shot(chosen, idx, times, a, vw, vh, cw, why))
         shots.append(shot)
         prev = shot
     return shots
+
+
+def _follow_shot(tr: dict, idx: list, times: list, a: float, vw: int, vh: int, cw: int, why: str) -> dict:
+    """A single-face following crop for the samples idx of one face track."""
+    boxes = [tr["boxes"].get(k) for k in idx]
+    if all(b is None for b in boxes):
+        boxes = [_track_box(tr)] * max(1, len(idx))
+        idx = idx or [0]
+    path = follow_path(boxes, [times[k] if k < len(times) else a for k in idx], a, vw, vh, cw)
+    fb = _track_box(tr)
+    x_mid = sorted(x for _, x in path)[len(path) // 2]
+    return {
+        "mode": "single",
+        "path": path,
+        "faces_out": [_out_face(fb, (cw, vh, x_mid, 0), vw, vh, 0, 1080, 1920)],
+        "why": why,
+    }
+
+
+def active_speaker_boxes(track: dict, a: float, b: float, spans: list = None):
+    """
+    (sample indexes in [a, b), the active speaker's box per sample) when 2+ stable faces are found there and the
+    track has frames; else None (callers then follow the largest face). Same rules as the speaker layout.
+    """
+    from streamclipper.faces import pick_speaker, voiced_at
+
+    times, faces, frames = track.get("times") or [], track.get("faces") or [], track.get("frames") or []
+    idx, tracks = _face_tracks(times, faces, a, b)
+    need = max(1, math.ceil(SPEAKER_MIN_HITS * len(idx)))
+    stable = [t for t in tracks if len(t["boxes"]) >= need]
+    if len(stable) < 2 or not frames:
+        return None
+    ts = [times[k] for k in idx]
+    who = pick_speaker(
+        _mouth_scores(frames, stable, idx, faces, track.get("mouths")),
+        ts,
+        voiced_at(ts, spans) if spans is not None else None,
+    )
+    return idx, [stable[j]["boxes"].get(k) for j, k in zip(who, idx, strict=False)]
+
+
+def _runs(who: list) -> list:
+    """[(value, i0, i1)] runs of equal values in a list."""
+    out = []
+    for i, v in enumerate(who):
+        if out and out[-1][0] == v:
+            out[-1][2] = i + 1
+        else:
+            out.append([v, i, i + 1])
+    return [tuple(r) for r in out]
+
+
+def _mouth_scores(frames: list, tracks: list, idx: list, faces: list, mouths: list = None) -> list:
+    """
+    scores[n][j]: mean frame difference in the mouth region of track j between samples idx[n-1] and idx[n]
+    (BlazeFace mouth keypoint when known, else the lower 40% of the face box; 0 when the face is not seen).
+    """
+    np = _np()
+    out = []
+    for n, k in enumerate(idx):
+        row = []
+        for tr in tracks:
+            b = tr["boxes"].get(k)
+            if n == 0 or b is None or k >= len(frames) or idx[n - 1] >= len(frames):
+                row.append(0.0)
+                continue
+            m = None
+            if mouths and k < len(mouths) and b in (faces[k] or []):
+                pts = mouths[k]
+                j = faces[k].index(b)
+                m = pts[j] if j < len(pts) else None
+            h, w = frames[k].shape[:2]
+            x0, y0, x1, y1 = mouth_box(b, m)
+            c0, c1 = max(0, int(x0 * w)), min(w, max(int(x0 * w) + 2, int(x1 * w)))
+            r0, r1 = max(0, int(y0 * h)), min(h, max(int(y0 * h) + 2, int(y1 * h)))
+            cur = frames[k][r0:r1, c0:c1].astype(np.int16)
+            old = frames[idx[n - 1]][r0:r1, c0:c1].astype(np.int16)
+            row.append(float(np.abs(cur - old).mean()) if cur.size and cur.shape == old.shape else 0.0)
+        out.append(row)
+    return out
 
 
 def speaker_caption_zone(shots: list, bands: dict = None) -> str:
@@ -776,7 +868,7 @@ def render_speaker_panel(video_path: Path, out_dir: Path, meta: dict, opts: dict
     if track is None:
         print("Speaker layout: OpenCV is not installed, so clips show the whole frame (pip install -e .[vision]).")
         track = {"times": [], "faces": [], "cuts": []}
-    shots = speaker_shots(track, dur, vw, vh, fps)
+    shots = speaker_shots(track, dur, vw, vh, fps, opts.get("speech_spans"))
     zone = speaker_caption_zone(shots)
     if zone == "lower":
         # low captions: the bottom person's head goes to the top of the lower half, the caption sits on the chest

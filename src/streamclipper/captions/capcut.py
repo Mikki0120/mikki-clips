@@ -576,6 +576,41 @@ def hook_capcut_fields(hook_style: str) -> dict:
     }
 
 
+MIN_WORD_SLOT = 0.12  # a word on screen for less than this (s) cannot be read: it joins the next word's caption
+_MERGE_MAX_CHARS = 14
+
+
+def _merge_short_words(words: list) -> list:
+    """
+    Words whose caption slot (until the next word starts) is shorter than MIN_WORD_SLOT join the next word
+    ("I" 5.45 + "got" 5.49 -> "I got"), so 1-word styles never drop them. Only adjacent words (gap < 0.18 s)
+    are joined, up to 14 characters per caption token.
+    """
+    out = []
+    i = 0
+    while i < len(words):
+        cur = dict(words[i])
+        while i + 1 < len(words):
+            nxt = words[i + 1]
+            short = nxt["rel_s"] - cur["rel_s"] < MIN_WORD_SLOT and nxt["rel_s"] - cur["rel_e"] < 0.18
+            if not short or len(cur["w"]) + 1 + len(nxt["w"]) > _MERGE_MAX_CHARS:
+                break
+            em = nxt.get("emoji") or cur.get("emoji")
+            cur = {
+                "w": f"{cur['w']} {nxt['w']}",
+                "rel_s": cur["rel_s"],
+                "rel_e": max(cur["rel_e"], nxt["rel_e"]),
+                "hype": cur["hype"] or nxt["hype"],
+                "masked": cur["masked"] or nxt["masked"],
+            }
+            if em:
+                cur["emoji"] = em
+            i += 1
+        out.append(cur)
+        i += 1
+    return out
+
+
 def _plain(text: str) -> str:
     t = re.sub(r"\{[a-z]+:([^{}]+)\}", r"\1", text)
     return t
@@ -631,8 +666,9 @@ def build_word_synced_captions(
         txt = apply_case(txt, case)
         rel_s = max(0.0, float(w["s"]) - seg_src_start)
         rel_e = min(seg_dur_s, float(w["e"]) - seg_src_start + 0.04)
-        if rel_e > rel_s + 0.04:
-            clean_words.append({"w": txt, "rel_s": rel_s, "rel_e": rel_e, "hype": False, "masked": masked})
+        # Whisper gives some words zero length ("to" 21.36-21.36): keep every word that starts inside the piece
+        if rel_s < seg_dur_s - 0.02 and float(w["e"]) >= float(w["s"]):
+            clean_words.append({"w": txt, "rel_s": rel_s, "rel_e": max(rel_e, rel_s), "hype": False, "masked": masked})
     if not clean_words:
         return []
     for a, b, _ in find_triggers([x["w"] for x in clean_words], digits=True):
@@ -641,6 +677,7 @@ def build_word_synced_captions(
     if use_emoji:
         for k, em in emoji_positions([x["w"] for x in clean_words]).items():
             clean_words[k]["emoji"] = em
+    clean_words = _merge_short_words(clean_words)
 
     def colour(gw, active: bool) -> str:
         if st.box and active:
@@ -687,7 +724,7 @@ def build_word_synced_captions(
             w_start = aw["rel_s"]
             w_end = grp[a_i + 1]["rel_s"] if a_i + 1 < len(grp) else g_end
             w_end = min(seg_dur_s, w_end)
-            if w_end <= w_start + 0.05:
+            if w_end <= w_start + 0.01:  # nothing to show (short words were joined to their neighbour above)
                 continue
             extra = {}
             if stack and len(grp) >= 2:

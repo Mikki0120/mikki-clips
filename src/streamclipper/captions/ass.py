@@ -170,6 +170,7 @@ def build_ass(plan: dict, lay: dict, out_path: Path, fonts_dir: Path) -> dict:
     hook_y = (lay.get("hook") or {}).get("y", lay["caption"]["y"])
     events, tops = [], []
     spans = []  # [s, e, x0, y0, x1, y1]: where each caption/hook shows (estimated box; the export gate's face check)
+    texts = []  # plain words of each span (None for a hook banner): the export gate's caption coverage
 
     def span(s, e, top, h, lines, size):
         chars = max((sum(len(w) for w, _ in ln) + len(ln) - 1 for ln in lines), default=0)
@@ -197,6 +198,7 @@ def build_ass(plan: dict, lay: dict, out_path: Path, fonts_dir: Path) -> dict:
             ev(4, s, e, "Hook", f"{{\\an8\\pos({X},{bar_top + pad})\\bord4\\shad0}}{txt}")
             tops.append(bar_top)
             spans.append([round(s, 3), round(e, 3), 0, bar_top, W, bar_top + bar_h])
+            texts.append(None)
             hook_bottom = max(hook_bottom or 0, bar_top + bar_h)
             continue
         if hstyle == "bold-box":
@@ -217,6 +219,7 @@ def build_ass(plan: dict, lay: dict, out_path: Path, fonts_dir: Path) -> dict:
         top = _est_top(hook_a, hook_y, n, hook_size) - pad
         tops.append(top)
         span(s, e, top, h + 2 * pad, lines, hook_size)
+        texts.append(None)
         hook_bottom = max(hook_bottom or 0, top + h + 2 * pad)
 
     # Word captions
@@ -238,6 +241,7 @@ def build_ass(plan: dict, lay: dict, out_path: Path, fonts_dir: Path) -> dict:
                 cy = int(new_top if align == 8 else (new_top + cap_h / 2 if align == 5 else new_top + cap_h))
         tops.append(_est_top(align, cy, len(lines), cap_size) - st.anim_up)
         span(s, e, tops[-1], cap_h + st.anim_up, lines, cap_size)
+        texts.append(" ".join(w for ln in _tokens(c["text"], 999, keep_emoji=False) for w, _ in ln))
         start = c.get("anim", "none") != "none"
         active = copts.get("highlight") or st.active
         _caption_events(ev, st, s, e, align, X, cy, lines, start, c.get("reveal"), fonts, active)
@@ -291,6 +295,7 @@ def build_ass(plan: dict, lay: dict, out_path: Path, fonts_dir: Path) -> dict:
         "hook_style": hstyle,
         "emoji_font": bool(fonts.emoji),
         "spans": spans,
+        "texts": texts,
     }
 
 

@@ -441,19 +441,30 @@ def _in_box(face, box, vw: int, vh: int) -> bool:
 
 
 def propose_keys(
-    segs: list, times: list, faces: list, vw: int, vh: int, ratio: str, cam=None, split_game=None
+    segs: list,
+    times: list,
+    faces: list,
+    vw: int,
+    vh: int,
+    ratio: str,
+    cam=None,
+    split_game=None,
+    track: dict = None,
+    spans: list = None,
 ) -> tuple:
     """
     Auto-reframe: (segments, note). Per segment the window that should show the streamer follows the largest face
-    (layout.follow_path: median of 3, speed-limited), as pan keyframes about one per second; split moves the cam
-    window and keeps the gameplay window; square-frame is left as it is.
+    (layout.follow_path: smoothed with a dead zone, speed-limited), as pan keyframes about one per second; with 2+
+    faces and track (vision.track_faces output with frames) it follows the active speaker instead (mouth motion
+    while someone talks; spans = [(s, e)] speech in video time); split moves the cam window and keeps the gameplay
+    window; square-frame is left as it is.
     cam = the detected facecam box [x, y, w, h] (source px). When it is a corner overlay and the face of a full
     segment sits inside it, that segment becomes split (cam panel on top, gameplay below; split_game = its gameplay
     crop) instead of a full-height pan that would keep the face low. A full-layout window puts the face in the upper
     third where it can: it moves up, and a full-height window with the face in the lower half shrinks (to
     MIN_ZOOM_H of the frame height at most) so the face moves up.
     """
-    from streamclipper.layout import follow_path
+    from streamclipper.layout import active_speaker_boxes, follow_path
 
     out, moved, keys_n, split_n = [], 0, 0, 0
     overlay = cam if corner_cam(cam, vw, vh) else None
@@ -463,6 +474,9 @@ def propose_keys(
         which = "cam" if seg["layout"] == "split" else (None if seg["layout"] == "square-frame" else "game")
         idx = [k for k, t in enumerate(times) if seg["start"] - 1e-3 <= t <= seg["end"] + 1e-3]
         boxes = [faces[k][0] if faces[k] else None for k in idx]
+        spk = active_speaker_boxes(track, seg["start"] - 1e-3, seg["end"] + 1e-3, spans) if track else None
+        if which == "game" and spk and any(spk[1]):
+            idx, boxes = spk
         if which is None or not any(boxes):
             out.append(seg)
             continue
