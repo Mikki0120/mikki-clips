@@ -253,6 +253,40 @@ def test_propose_keys_follows_the_face():
     assert none[0]["keys"] == [] and "No face" in note
 
 
+LOW_CAM = [1440, 700, 440, 340]  # facecam overlay in the lower right corner of a 1920x1080 stream
+
+
+def _low_cam_faces(n=13):
+    # the streamer's face moves a little inside the cam box (normalised x0, y0, x1, y1), every 0.5 s
+    return [[[0.80 + 0.002 * k, 0.72, 0.86 + 0.002 * k, 0.84]] for k in range(n)]
+
+
+def test_auto_reframe_low_corner_cam_proposes_split():
+    times = [1.0 + 0.5 * k for k in range(12)]  # 1.0 .. 6.5, no face in the second segment
+    segs = [seg(1, 7, boundary="smooth"), seg(7, 9)]
+    out, note = reframe.propose_keys(segs, times, _low_cam_faces(), 1920, 1080, "9:16", LOW_CAM, SPLIT_GAME)
+    first = out[0]
+    assert first["layout"] == "split" and first["keys"] == [] and "Split" in note
+    cx, cy, cw, ch = first["windows"]["cam"]
+    assert cx <= 1440 + 220 <= cx + cw and cy <= 700 + 170 <= cy + ch  # the cam box is in the facecam panel
+    gx, gy, gw, gh = first["windows"]["game"]
+    assert abs(cw / ch - 1080 / 672) < 0.03 and abs(gx - SPLIT_GAME[0]) <= 2 and abs(gw - SPLIT_GAME[2]) <= 2
+    assert first["boundary"] == "cut"  # split -> full cannot join smoothly
+    assert out[1]["layout"] == "full"  # no face there: left as it is
+    reframe.validate_segments(out, CTX, 1, 9)
+    # the same faces as the main scene (no corner overlay): a full-height window moves the face up
+    full, _n = reframe.propose_keys(segs[:1], times, _low_cam_faces(), 1920, 1080, "9:16")
+    x, y, w, h = full[0]["windows"]["game"]
+    assert full[0]["layout"] == "full" and h >= reframe.MIN_ZOOM_H * 1080 - 2 and h < 1078
+    face_y = (0.72 + 0.84) / 2 * 1080
+    assert y + h == 1080 and (face_y - y) / h < (face_y / 1080)  # higher in the window than in the source
+    assert all(k["game"][1] == y and k["game"][3] == h for k in full[0]["keys"])
+    reframe.validate_segments(full, CTX, 1, 7)
+    # a big cam box is not a corner overlay: no split
+    big, _n = reframe.propose_keys(segs[:1], times, _low_cam_faces(), 1920, 1080, "9:16", [960, 300, 960, 780])
+    assert big[0]["layout"] == "full"
+
+
 # ---- real ffmpeg render -------------------------------------------------------------------------------------
 
 needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="needs ffmpeg")

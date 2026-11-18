@@ -359,8 +359,70 @@ async function pageEdit(root, jobId, key) {
     if (segs().some((s) => s.layout === "split")) z.push([8, (tall ? 672 : 454) + 28]);
     return z;
   }
-  function placeCaption() {
+  // ---- hook banner zone and the caption below it: mirrors captions/ass.py build_ass --------------------------
+  const KS = CH === 1080 ? 0.76 : 1;
+  const estTop = (a, y, n, size) => {
+    const hh = n * size * 1.2;
+    return a === 8 ? y : a === 5 ? y - hh / 2 : y - hh;
+  };
+  function lineCount(text, max = 16) {
+    // ass._tokens: markup stripped, words wrapped at `max` characters, at most 2 lines
+    const plain = String(text || "").replace(/\{\w+:([^}]*)\}/g, "$1").replace(/\*([^*]+)\*/g, "$1");
+    let n = 0;
+    for (const raw of plain.split("\n")) {
+      let cur = 0, any = false;
+      for (const w of raw.split(/\s+/).filter(Boolean)) {
+        const add = w.length + (any ? 1 : 0);
+        if (any && cur + add > max) {
+          n++;
+          cur = w.length;
+        } else {
+          cur += add;
+          any = true;
+        }
+      }
+      if (any) n++;
+    }
+    return clamp(n, 1, 2);
+  }
+  function hookZone() {
+    // the render uses the reframe panel (layout "full") for 2+ segments or keyframes, else the segment's layout;
+    // a caption anchor (dragged, or the reframe panel's auto one) moves the hook with it (apply_caption_anchor)
+    const s = segs(), zones = ctx.hook_zones || {};
+    const rf = s.length > 1 || s.some((x) => x.keys.length);
+    const z = zones[rf ? "full" : s[0].layout] || zones.full;
+    if (!z) return null;
+    const anchor = form.caption_anchor || (rf ? (zones[s[0].layout] || {}).auto_anchor : null);
+    const hk = anchor ? { ...z.hook, align: anchor[0], y: anchor[1] } : z.hook;
+    const n = lineCount(form.hook_text);
+    const size = Math.round((form.hook_style === "top-bar" ? 80 : 96) * KS);
+    const hh = n * size * 1.2;
+    if (form.hook_style === "top-bar") {
+      const barH = Math.trunc(hh + 52);
+      const top = z.frame ? z.frame[1] - barH : Math.trunc(hk.bar_top ?? 160);
+      return { top, bottom: top + barH, align: hk.align, bar: true };
+    }
+    const pad = form.hook_style === "bold-box" ? 18 : 14;
+    const top = estTop(hk.align, hk.y, n, size) - pad;
+    return { top, bottom: top + hh + 2 * pad, align: hk.align, bar: false };
+  }
+  let capGroup = null; // {s, text} of the caption on screen (drawOverlay)
+  const hookOn = (t) => !!form.hook_text && t >= form.start - 0.05 && t < form.start + 2;
+  function captionAt() {
+    // a caption that starts while the hook shows and sits in its zone moves just below the hook banner
     const [a, y] = anchorNow();
+    if (!capGroup || !form.hook_text || capGroup.s >= form.start + 2 - 0.01) return [a, y];
+    const hz = hookZone();
+    if (!hz || !(hz.bar || hz.align === a)) return [a, y];
+    const info = ctx.style_info[form.caption_style] || ctx.style_info["bold-pop"] || {};
+    const size = Math.round((info.size || 84) * KS), up = info.anim_up || 0;
+    const n = lineCount(capGroup.text), capH = n * size * 1.2;
+    if (estTop(a, y, n, size) - up >= hz.bottom + 20) return [a, y];
+    const nt = hz.bottom + 24 + up;
+    return [a, Math.trunc(a === 8 ? nt : a === 5 ? nt + capH / 2 : nt + capH)];
+  }
+  function placeCaption() {
+    const [a, y] = captionAt();
     ovCap.style.top = `${(y / CH) * 100}%`;
     ovCap.style.transform = a === 8 ? "translateY(0)" : a === 5 ? "translateY(-50%)" : "translateY(-100%)";
     capAuto.disabled = !form.caption_anchor;
@@ -450,10 +512,13 @@ async function pageEdit(root, jobId, key) {
       }).flat()
     );
     ovCap.dataset.style = form.caption_style;
-    const showHook = form.hook_text && t >= form.start - 0.05 && t < form.start + 2;
+    const shown = group || sample;
+    capGroup = shown ? { s: shown[0].s, text: shown.map((w) => form.words[w.i]).join(" ") } : null;
+    const showHook = hookOn(t);
     ovHook.className = "ov-hook " + form.hook_style;
-    ovHook.style.top = segs()[segAt(t)].layout === "split" ? "28%" : "14%";
-    ovHook.replaceChildren(showHook ? h("span", { text: form.hook_text.toUpperCase() }) : "");
+    const hz = showHook ? hookZone() : null;
+    if (hz) Object.assign(ovHook.style, { top: `${(hz.top / CH) * 100}%`, height: `${((hz.bottom - hz.top) / CH) * 100}%` });
+    ovHook.replaceChildren(hz ? h("span", { text: form.hook_text.toUpperCase() }) : "");
     placeCaption();
   }
 
@@ -740,7 +805,7 @@ async function pageEdit(root, jobId, key) {
   // ---- playback ---------------------------------------------------------------------------------------------
 
   let playingSel = false;
-  const playBtn = h("button", { class: "btn sm", type: "button", id: "ed-play", title: "Play / pause (Space)" }, icon("play", 16), h("span", { text: "Play" }));
+  const playBtn = h("button", { class: "btn sm", type: "button", id: "ed-play", title: "Play / pause (Space)", "aria-label": "Play" }, icon("play", 16), h("span", { class: "lbl", text: "Play" }));
   function playPause() {
     if (!video.paused) {
       video.pause();
@@ -752,9 +817,13 @@ async function pageEdit(root, jobId, key) {
     video.play().catch(() => {});
   }
   playBtn.addEventListener("click", playPause);
-  video.addEventListener("play", () => playBtn.replaceChildren(icon("pause", 16), h("span", { text: "Pause" })));
+  video.addEventListener("play", () => {
+    playBtn.setAttribute("aria-label", "Pause");
+    playBtn.replaceChildren(icon("pause", 16), h("span", { class: "lbl", text: "Pause" }));
+  });
   video.addEventListener("pause", () => {
-    playBtn.replaceChildren(icon("play", 16), h("span", { text: "Play" }));
+    playBtn.setAttribute("aria-label", "Play");
+    playBtn.replaceChildren(icon("play", 16), h("span", { class: "lbl", text: "Play" }));
     playingSel = false;
     video.playbackRate = 1;
   });
@@ -871,7 +940,7 @@ async function pageEdit(root, jobId, key) {
     syncAll();
   });
   const tb = (id, ic, label, title, fn, cls) => {
-    const b = h("button", { class: "btn sm " + (cls || ""), type: "button", id, title }, icon(ic, 16), h("span", { class: "lbl", text: label }));
+    const b = h("button", { class: "btn sm " + (cls || ""), type: "button", id, title, "aria-label": label }, icon(ic, 16), h("span", { class: "lbl", text: label }));
     b.addEventListener("click", fn);
     return b;
   };
@@ -883,6 +952,17 @@ async function pageEdit(root, jobId, key) {
   const bReset = tb("ed-reset", "rotate-ccw", "Reset to auto-detected", "Put this segment's crop back to the detected one", resetAuto);
   const bUndo = tb("ed-undo", "undo-2", "Undo", "Undo (Ctrl+Z)", undo, "ghost");
   const bRedo = tb("ed-redo", "redo-2", "Redo", "Redo (Ctrl+Shift+Z)", redo, "ghost");
+  // secondary actions live in the "More" menu; the hidden buttons keep their enabled state (syncSegUI)
+  const bMore = menuBtn(
+    () => [
+      { label: "Merge with the segment before", icon: "scissors", disabled: bMerge.disabled, onClick: merge },
+      { label: "Delete keyframe (Delete)", icon: "trash-2", disabled: bDelKey.disabled, onClick: delKey },
+      "-",
+      { label: "Reset crop to auto-detected", icon: "rotate-ccw", title: "Put this segment's crop back to the detected one", onClick: resetAuto },
+    ],
+    "More editing actions"
+  );
+  bMore.id = "ed-more";
   function updHistoryBtns() {
     bUndo.disabled = !undoStack.length;
     bRedo.disabled = !redoStack.length;
@@ -892,7 +972,12 @@ async function pageEdit(root, jobId, key) {
     bAuto.disabled = true;
     setStatus("Finding faces in the clip ...");
     try {
-      await api("POST", `${base}/reframe`, { edit: payload() });
+      try {
+        await api("POST", `${base}/reframe`, { edit: payload() });
+      } catch (e) {
+        if (e.status !== 409) throw e;
+        setStatus(e.message); // a run started elsewhere (another tab): wait for its result
+      }
       let r = { running: true };
       for (let n = 0; n < 600 && r.running; n++) {
         await new Promise((ok) => setTimeout(ok, 800));
@@ -1197,8 +1282,10 @@ async function pageEdit(root, jobId, key) {
   const toolbar = h(
     "div",
     { class: "card ed-toolbar", id: "ed-toolbar" },
-    h("div", { class: "row tight" }, playBtn, timeTxt, h("span", { class: "sep" }), bSplit, bMerge, field("Layout", layoutSel), segInfo),
-    h("div", { class: "row tight" }, bAddKey, bDelKey, easeSel, h("span", { class: "sep" }), bAuto, bReset, h("span", { class: "sep" }), bUndo, bRedo)
+    h("div", { class: "tb-group" }, playBtn, timeTxt),
+    h("div", { class: "tb-group" }, bSplit, layoutSel, segInfo),
+    h("div", { class: "tb-group" }, bAddKey, easeSel, bAuto),
+    h("div", { class: "tb-group" }, bUndo, bRedo, bMore)
   );
   root.replaceChildren(
     h(

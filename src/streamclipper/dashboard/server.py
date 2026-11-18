@@ -39,6 +39,7 @@ from streamclipper.dashboard.jobs import (
     build_vod_argv,
     check_job_id,
     new_job_id,
+    parse_bool,
     presets,
     validate_options,
 )
@@ -860,7 +861,7 @@ class Handler(BaseHTTPRequestHandler):
         if action == "delete":
             if job.get("status") in ("running", "queued") or srv.runner.running_id() == job_id:
                 raise ToolError("This job is still running.", "wait until it has finished, then delete clips")
-            moved = library.delete_clip(srv.store, srv.ws, job_id, key, body.get("confirm") is True)
+            moved = library.delete_clip(srv.store, srv.ws, job_id, key, parse_bool(body.get("confirm"), "confirm"))
             return self._send_json(200, {"moved": moved, "trash": "trash/" + job_id})
         raise HttpError(404, "Not found.")
 
@@ -934,17 +935,25 @@ class Handler(BaseHTTPRequestHandler):
         """Auto-reframe of one clip's edit on a background thread (face tracking takes seconds); one run per clip."""
         srv = self.server
         k = (job_id, key)
-        with srv.reframe_lock:
+        state = {"running": True, "error": "", "hint": "", "segments": None, "faces": [], "note": ""}
+        with srv.reframe_lock:  # check and claim in one step, so two quick POSTs start one tracking thread
             cur = srv.reframes.get(k)
             if cur and cur["running"]:
-                return dict(cur)
-        ctx = editor.context(srv.store, job_id, key, srv.lan)
-        form = editor.validate(ctx, edit)
-        _jdir, out, edir = editor._dirs(srv.store, job_id, key)
-        video = editor.source_info(editor._load_plan(out, key), editor.lan_roots(srv.store) if srv.lan else None)
-        state = {"running": True, "error": "", "hint": "", "segments": None, "faces": [], "note": ""}
-        with srv.reframe_lock:
+                raise HttpError(409, "Auto-reframe is already running for this clip. Wait for it to finish.")
+            prev = cur
             srv.reframes[k] = state
+        try:
+            ctx = editor.context(srv.store, job_id, key, srv.lan)
+            form = editor.validate(ctx, edit)
+            _jdir, out, edir = editor._dirs(srv.store, job_id, key)
+            video = editor.source_info(editor._load_plan(out, key), editor.lan_roots(srv.store) if srv.lan else None)
+        except BaseException:
+            with srv.reframe_lock:  # a bad request leaves the previous result as it was
+                if prev is None:
+                    srv.reframes.pop(k, None)
+                else:
+                    srv.reframes[k] = prev
+            raise
 
         def run():
             try:

@@ -750,7 +750,8 @@ function looksLive(src) {
 async function pageHome(root) {
   const d = OPTS.defaults || {};
   const st = { mode: "auto", preset: d.preset || "", ratio: "9:16", min_score: 50, max_clips: 3, llm: "none", render: true, drafts: false, upload: "", uploading: false };
-  const srcIn = h("input", { type: "text", id: "src-url", class: "hero-input", placeholder: "Paste a stream link or drop a video", autocomplete: "off", spellcheck: "false", "aria-label": "Stream link or video" });
+  const narrow = window.matchMedia("(max-width: 640px)");
+  const srcIn = h("input", { type: "text", id: "src-url", class: "hero-input", placeholder: narrow.matches ? "Paste a link or drop a video" : "Paste a stream link or drop a video", autocomplete: "off", spellcheck: "false", "aria-label": "Stream link or video" });
   const fileIn = h("input", { type: "file", id: "src-file", accept: "video/*,.mkv,.ts,.flv,.m4v", hidden: true });
   const pick = h("button", { class: "btn ghost", type: "button", id: "pick-file", onclick: () => fileIn.click() }, icon("upload", 16), h("span", { class: "hide-sm", text: "Choose file" }));
   const go = h("button", { class: "btn primary lg", type: "submit", id: "home-go" }, icon("sparkles", 18), "Get clips");

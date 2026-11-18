@@ -91,7 +91,11 @@ def test_job_cards_have_thumb_count_and_source(dash):
     assert tw["clip_count"] == 2 and tw["thumb_url"] == f"/files/{ids['twitch']}/out/clip_01_thumb.jpg"
     assert dash.req("GET", tw["thumb_url"])[0] == 200
     # a deleted clip no longer counts, and the next clip's thumbnail is used
-    assert dash.json("POST", f"/api/jobs/{ids['twitch']}/clips/clip_01/delete", {"confirm": True})[0] == 200
+    delete = f"/api/jobs/{ids['twitch']}/clips/clip_01/delete"
+    st, r = dash.json("POST", delete, {"confirm": "maybe"})
+    assert st == 400 and "confirm must be true or false" in r["error"]
+    assert dash.json("POST", delete, {"confirm": "false"})[0] == 400  # not confirmed
+    assert dash.json("POST", delete, {"confirm": True})[0] == 200
     tw = next(j for j in dash.json("GET", "/api/jobs")[1]["jobs"] if j["id"] == ids["twitch"])
     assert tw["clip_count"] == 1 and tw["thumb_url"].endswith("/clip_02_thumb.jpg")
     # file jobs, and jobs without clips yet
@@ -106,6 +110,13 @@ def test_job_cards_have_thumb_count_and_source(dash):
     assert len(files) == 20 and all(
         j["source_kind"] == "file" and j["clip_count"] == 0 and j["thumb_url"] == "" for j in files
     )
+
+
+def test_job_booleans_are_strict(dash):
+    st, r = dash.json("POST", "/api/jobs", {"source": "https://example.com/vod", "render": "maybe"})
+    assert st == 400 and "render must be true or false" in r["error"] and r["hint"]
+    st, j = dash.json("POST", "/api/jobs", {"source": "https://example.com/vod", "render": "false", "drafts": "0"})
+    assert st == 201 and j["options"]["render"] is False and j["options"]["drafts"] is False, j
 
 
 def test_vod_job_runs_queue_cancel_resume_files_mark_rerender(dash, tmp_path):

@@ -420,15 +420,43 @@ def _thin(path: list, spacing: float, limit: int) -> list:
     return out[: limit + 1]
 
 
-def propose_keys(segs: list, times: list, faces: list, vw: int, vh: int, ratio: str) -> tuple:
+CORNER_CAM_AREA = 0.2  # a facecam overlay covers at most this share of the frame
+IN_CAM_SHARE = 0.6  # share of a segment's faces inside the cam box that makes it a facecam segment
+FACE_TOP_Y = 0.3  # full layout: the face centre goes this far down the window (upper third)
+MIN_ZOOM_H = 0.75  # a full-height window may shrink to this share of the frame height to frame a low face
+
+
+def corner_cam(cam, vw: int, vh: int) -> bool:
+    """True when the detected cam box [x, y, w, h] is a small overlay in a corner of the frame."""
+    if not cam:
+        return False
+    x, y, w, h = cam
+    cx, cy = (x + w / 2) / vw, (y + h / 2) / vh
+    return w * h <= CORNER_CAM_AREA * vw * vh and abs(cx - 0.5) > 0.15 and abs(cy - 0.5) > 0.15
+
+
+def _in_box(face, box, vw: int, vh: int) -> bool:
+    fx, fy = (face[0] + face[2]) / 2 * vw, (face[1] + face[3]) / 2 * vh
+    return box[0] <= fx <= box[0] + box[2] and box[1] <= fy <= box[1] + box[3]
+
+
+def propose_keys(
+    segs: list, times: list, faces: list, vw: int, vh: int, ratio: str, cam=None, split_game=None
+) -> tuple:
     """
     Auto-reframe: (segments, note). Per segment the window that should show the streamer follows the largest face
     (layout.follow_path: median of 3, speed-limited), as pan keyframes about one per second; split moves the cam
-    window and keeps the gameplay window; square-frame is left as it is. Windows keep their size.
+    window and keeps the gameplay window; square-frame is left as it is.
+    cam = the detected facecam box [x, y, w, h] (source px). When it is a corner overlay and the face of a full
+    segment sits inside it, that segment becomes split (cam panel on top, gameplay below; split_game = its gameplay
+    crop) instead of a full-height pan that would keep the face low. A full-layout window puts the face in the upper
+    third where it can: it moves up, and a full-height window with the face in the lower half shrinks (to
+    MIN_ZOOM_H of the frame height at most) so the face moves up.
     """
     from streamclipper.layout import follow_path
 
-    out, moved, keys_n = [], 0, 0
+    out, moved, keys_n, split_n = [], 0, 0, 0
+    overlay = cam if corner_cam(cam, vw, vh) else None
     for seg in segs:
         seg = copy.deepcopy(seg)
         seg["keys"] = []
@@ -438,10 +466,35 @@ def propose_keys(segs: list, times: list, faces: list, vw: int, vh: int, ratio: 
         if which is None or not any(boxes):
             out.append(seg)
             continue
+        found = [b for b in boxes if b]
+        if (
+            which == "game"
+            and overlay
+            and seg["layout"] in ("full", "caption-punch")
+            and sum(_in_box(b, overlay, vw, vh) for b in found) >= IN_CAM_SHARE * len(found)
+        ):
+            # the face is the facecam overlay, not the scene: show it in its own panel above the gameplay
+            asp = window_aspects("split", ratio)
+            game = split_game or [0, 0, vw, vh]
+            seg["layout"] = "split"
+            seg["windows"] = {
+                "cam": lock_aspect(overlay, asp["cam"], vw, vh),
+                "game": lock_aspect(game, asp["game"], vw, vh),
+            }
+            split_n += 1
+            out.append(seg)
+            continue
         _x, y, w, h = seg["windows"][which]
+        cys = sorted((b[1] + b[3]) / 2 * vh for b in found)
+        cy = cys[len(cys) // 2]
+        top = FACE_TOP_Y if which == "game" else 0.42
+        if which == "game" and h >= vh - 2 and cy > 0.5 * vh:
+            # full height: y cannot move, so zoom in (bottom-aligned) until the face reaches the upper third
+            nh = max(MIN_ZOOM_H * vh, min(h, (vh - cy) / (1 - top)))
+            if nh < h - 2:
+                _x, y, w, h = lock_aspect([_x + (w - nh * w / h) / 2, 0, nh * w / h, nh], w / h, vw, vh)
+        ny = y if h >= vh else max(0, min(vh - h, int(round(cy - top * h)))) & ~1
         path = follow_path(boxes, [times[k] for k in idx], seg["start"], vw, vh, w)
-        cys = sorted((b[1] + b[3]) / 2 * vh for b in boxes if b)
-        ny = y if h >= vh else max(0, min(vh - h, int(round(cys[len(cys) // 2] - 0.42 * h)))) & ~1
         path = _thin(path, KEY_SPACING, MAX_KEYS)
         seg["windows"][which] = [int(path[0][1]) & ~1, ny, w, h]
         for t, x in path[1:]:
@@ -456,9 +509,15 @@ def propose_keys(segs: list, times: list, faces: list, vw: int, vh: int, ratio: 
         moved += 1
         keys_n += len(seg["keys"])
         out.append(seg)
-    note = (
-        f"Followed the face in {moved} segment(s) with {keys_n} keyframe(s)."
-        if moved
-        else "No face found in this clip; the windows stay as they are."
-    )
+    for a, b in zip(out, out[1:], strict=False):  # a changed layout or window size cannot join smoothly
+        if a.get("boundary") == "smooth" and not smooth_allowed(a, b):
+            a["boundary"] = "cut"
+    if out:
+        out[-1]["boundary"] = "cut"
+    parts = []
+    if moved:
+        parts.append(f"Followed the face in {moved} segment(s) with {keys_n} keyframe(s).")
+    if split_n:
+        parts.append(f"Facecam in a corner: {split_n} segment(s) set to Split (facecam on top, gameplay below).")
+    note = " ".join(parts) or "No face found in this clip; the windows stay as they are."
     return out, note

@@ -247,6 +247,52 @@ def test_auto_reframe_runs_in_the_background(dash, monkeypatch):
         time.sleep(0.05)
     assert "OpenCV" in r["error"] and "streamclipper[vision]" in r["hint"]
     assert dash.json("POST", f"{base}/reframe", {"edit": "x"})[0] == 400
+    assert "OpenCV" in dash.json("GET", f"{base}/reframe")[1]["error"]  # a bad request keeps the last result
+
+
+def test_two_quick_auto_reframe_posts_start_one_run(dash, monkeypatch):
+    import threading
+    import time
+
+    from streamclipper import vision
+
+    c = _ctx(dash)
+    base = f"/api/jobs/{dash.job}/clips/clip_01"
+    calls, go = [], threading.Event()
+
+    def fake_track(video, start, end, step, vw, vh):
+        calls.append(start)
+        time.sleep(0.3)
+        return {"times": [1.0, 2.0], "faces": [[[0.1, 0.3, 0.2, 0.5]], [[0.1, 0.3, 0.2, 0.5]]]}
+
+    monkeypatch.setattr(vision, "track_faces", fake_track)
+    real_context = editor.context
+
+    def slow_context(*a, **kw):  # widen the window between the check and the thread start
+        time.sleep(0.1)
+        return real_context(*a, **kw)
+
+    monkeypatch.setattr(editor, "context", slow_context)
+    res = []
+
+    def post():
+        go.wait()
+        res.append(dash.json("POST", f"{base}/reframe", {"edit": c["current"]}))
+
+    ts = [threading.Thread(target=post) for _ in range(2)]
+    for t in ts:
+        t.start()
+    go.set()
+    for t in ts:
+        t.join(10)
+    codes = sorted(st for st, _r in res)
+    assert codes == [202, 409], res
+    assert "already running" in next(r for st, r in res if st == 409)["error"]
+    for _ in range(100):
+        if not dash.json("GET", f"{base}/reframe")[1]["running"]:
+            break
+        time.sleep(0.05)
+    assert len(calls) == 1
 
 
 def test_thumbs_sprite_is_made_once(dash, monkeypatch):

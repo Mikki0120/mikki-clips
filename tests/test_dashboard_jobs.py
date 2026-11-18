@@ -78,6 +78,19 @@ def test_options_are_validated_and_clamped():
             jobs.validate_options(bad)
 
 
+def test_booleans_are_strict():
+    for v, want in [(True, True), (False, False), (1, True), (0, False), ("true", True), ("FALSE", False)]:
+        assert jobs.parse_bool(v, "render") is want
+    for v, want in [("1", True), ("0", False), ("Yes", True), (" no ", False), (None, True)]:
+        assert jobs.parse_bool(v, "render", True) is want
+    o = jobs.validate_options({"render": "false", "drafts": "yes"})
+    assert o["render"] is False and o["drafts"] is True
+    assert jobs.validate_options({})["render"] is True and jobs.validate_options({})["drafts"] is False
+    for bad in ("maybe", "", 2, -1, 0.5, [], {}, "truee"):
+        with pytest.raises(ToolError, match="render must be true or false"):
+            jobs.validate_options({"render": bad})
+
+
 def _runner(tmp_path, monkeypatch, sleep="0.05"):
     monkeypatch.setattr(jobs, "CLI_PREFIX", FAKE)
     monkeypatch.setattr(jobs, "POLL_S", 0.05)

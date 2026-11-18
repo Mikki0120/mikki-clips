@@ -55,6 +55,23 @@ def _choice(value, allowed, what: str, default=""):
     return value
 
 
+TRUE_WORDS, FALSE_WORDS = ("true", "1", "yes"), ("false", "0", "no")
+
+
+def parse_bool(value, what: str, default: bool = False) -> bool:
+    """Strict boolean of an API option: true/false, 1/0 or the strings true/false, 1/0, yes/no (any case);
+    missing or null = default. Anything else is a ToolError (HTTP 400), so "false" never counts as true."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str) and value.strip().lower() in TRUE_WORDS + FALSE_WORDS:
+        return value.strip().lower() in TRUE_WORDS
+    raise ToolError(f"{what} must be true or false, not {str(value)[:40]!r}.", "send true/false, 1/0 or yes/no")
+
+
 def _num(value, lo, hi, default, cast=float):
     try:
         v = cast(value)
@@ -76,8 +93,8 @@ def validate_options(raw: dict) -> dict:
         "llm": _choice(raw.get("llm"), PROVIDERS, "LLM", "none"),
         "min_score": _num(raw.get("min_score"), 0.0, 100.0, 50.0),
         "max_clips": _num(raw.get("max_clips"), 0, 50, 3, int),
-        "render": bool(raw.get("render", True)),
-        "drafts": bool(raw.get("drafts", False)),
+        "render": parse_bool(raw.get("render"), "render", True),
+        "drafts": parse_bool(raw.get("drafts"), "drafts", False),
         "stop_after": _num(raw.get("stop_after"), 0.0, 1440.0, 60.0),
         "max_clips_per_hour": _num(raw.get("max_clips_per_hour"), 1, 60, 12, int),
     }

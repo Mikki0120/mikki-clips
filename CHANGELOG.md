@@ -1,4 +1,11 @@
 # Changelog
+## 5.2.1 (2026-11-18)
+### Fixed
+- Editor preview: in the first 2 s the hook banner and the caption no longer draw on top of each other; the preview places the hook and moves the caption below it with the same rules as the render.
+- Editor toolbar: grouped controls, icon-only buttons with tooltips under 1280 px and a More menu (Merge, Delete keyframe, Reset crop), so it fits on two rows at 1024 px. Home: a shorter link placeholder on phones.
+- Auto-reframe: two quick clicks (or two tabs) start one face-tracking run; the second request gets "already running" (HTTP 409).
+- Auto-reframe with a facecam overlay in a corner: segments where the face is in the cam box are set to Split (facecam on top, gameplay below) instead of a full-height pan with the face low; a full-layout crop puts the face in the upper third where the source allows.
+- Jobs API: `render`, `drafts` and the delete `confirm` flag are parsed strictly (true/false, 1/0, yes/no); `"render": "false"` no longer counts as true, and other values give HTTP 400.
 ## 5.2.0 (2026-11-18)
 ### Added
 - Premium dashboard: left sidebar (bottom bar on phones), Home with one-click **Get clips** and an Advanced drawer, a first-run set-up check (doctor in the background), Projects grid with thumbnails, source icons, progress rings and clip counts, vertical clip cards with hover preview and score breakdown, a Styles page with Set as default, skeleton loaders, toasts, confirm dialogs, keyboard shortcuts (`/`, `?`) and Lucide icons (ISC).

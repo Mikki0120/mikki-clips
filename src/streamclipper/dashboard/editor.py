@@ -309,6 +309,7 @@ def context(store, job_id: str, key: str, lan: bool = False) -> dict:
         "words": words,
         "wave": {"lo": round(lo, 3), "step": WAVE_STEP, "peaks": waveform(si["video"], lo, hi, edir / "wave.json")},
         "layouts": layouts,
+        "cam_px": _xywh(boxes.get("cam")),
         "layout_labels": LAYOUT_LABELS,
         "canvas": list(reframe.canvas(ratio)),
         "aspects": {name: reframe.window_aspects(name, ratio) for name in LAYOUTS},
@@ -338,9 +339,12 @@ def context(store, job_id: str, key: str, lan: bool = False) -> dict:
                 "active": NEON_PALETTE[s.active][1],
                 "box": s.box,
                 "case": s.case,
+                "size": s.size,
+                "anim_up": s.anim_up,
             }
             for n, s in STYLES.items()
         },
+        "hook_zones": _hook_zones(ratio),
         "palette": {k: v[1] for k, v in NEON_PALETTE.items()},
         "hook_styles": list(HOOK_STYLES),
         "positions": list(CAPTION_POSITIONS),
@@ -352,6 +356,25 @@ def context(store, job_id: str, key: str, lan: bool = False) -> dict:
         "mp4_url": clip.get("mp4_url", ""),
         "gate": clip.get("gate"),
     }
+
+
+def _hook_zones(ratio: str) -> dict:
+    """Per editor layout: the render's hook banner anchor (layout.layout_boxes), the square frame rect and the
+    reframe panel's auto caption anchor, so the preview places the hook and moves the caption as build_ass does."""
+    from streamclipper.layout import layout_boxes
+
+    out = {}
+    for name in [*LAYOUTS, "full"]:
+        try:
+            lay = layout_boxes(ratio, name)
+        except ToolError:
+            lay = layout_boxes(ratio, "full")
+        out[name] = {
+            "hook": lay["hook"],
+            "frame": (lay.get("rects") or {}).get("frame"),
+            "auto_anchor": reframe.auto_anchor(name, ratio),
+        }
+    return out
 
 
 def _thumb_count(lo: float, hi: float) -> int:
@@ -421,7 +444,9 @@ def auto_reframe(ctx: dict, form: dict, video: Path, edir: Path) -> dict:
             "Auto-reframe needs face detection (OpenCV).",
             'install the vision extra: pip install "streamclipper[vision]"',
         )
-    out, note = reframe.propose_keys(segs, track["times"], track["faces"], vw, vh, ratio)
+    out, note = reframe.propose_keys(
+        segs, track["times"], track["faces"], vw, vh, ratio, ctx.get("cam_px"), ctx["layouts"]["split"]["game"]
+    )
     faces = [
         {"t": t, "box": [round(f[0][0] * vw), round(f[0][1] * vh), round(f[0][2] * vw), round(f[0][3] * vh)]}
         for t, f in zip(track["times"], track["faces"], strict=False)
