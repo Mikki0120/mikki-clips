@@ -100,10 +100,12 @@ def build_candidates(
     st: dict,
     dur: float,
     transcribed: bool = None,
+    hud=None,
 ) -> list:
     """
-    Every candidate clip: voice peaks, chat spikes without a voice peak (at spike - 6 s) and LLM payoffs
-    away from both. Each gets a story window, trimmed segments and a score breakdown (scoring.score_parts).
+    Every candidate clip: voice peaks, chat spikes without a voice peak (at spike - 6 s), strong on-screen
+    game events without a voice peak (at event - 2 s; hud = hud.analyze.Hud) and LLM payoffs away from all
+    of them. Each gets a story window, trimmed segments and a score breakdown (scoring.score_parts).
     An LLM segment attaches to at most one candidate (the one whose peak is nearest its payoff).
     st keys used: min_dur, max_dur, target_dur, min_pause. Shared by VOD discovery and live mode.
     """
@@ -115,6 +117,11 @@ def build_candidates(
         if not any(sp["t"] - 15.0 <= pk["t"] <= sp["t"] + 5.0 for pk, _ in marks):
             marks.append((peak_near(env, max(0.0, sp["t"] - 6.0), 2.0), ["chat"]))
     content = st.get("content") or "gaming"
+    if hud is not None and content != "talk" and "exc" in env:
+        # WASTED appears just after the death: the payoff is the moment before the screen
+        for ev in hud.strong(DEFAULT_BAR["hud_cue"]):
+            if not any(ev["t"] - 15.0 <= pk["t"] <= ev["t"] + 5.0 for pk, _ in marks):
+                marks.append((peak_near(env, max(0.0, ev["t"] - 2.0), 2.0), ["hud"]))
     if content == "talk":
         llm_segs = [g for g in llm_segs or [] if llm_fits_transcript(g, words)]
         # podcasts: strong lines in the transcript are moments too, even when nobody gets loud
@@ -149,8 +156,9 @@ def build_candidates(
         segs = snap_segments(trim_pauses(win, isl, st["min_pause"], (p - 3.0, p + 1.5)), near_w, 0.0, dur)
         cw = [w for w in near_w if w["e"] > win["start"] and w["s"] < win["end"]]
         chat = window_score(chat_sig, p) if chat_sig is not None else None
+        hsig = hud.window(win) if hud is not None and content != "talk" else None
         score, breakdown, reason, category, signals, comp = score_parts(
-            win, pk, env, cw, isl, segs, heatmap, transcribed, chat, laughs, seg, content
+            win, pk, env, cw, isl, segs, heatmap, transcribed, chat, laughs, seg, content, hsig
         )
         hm = signals.get("heatmap")
         if chat is not None and chat["score"] > 0.05 and "chat" not in srcs:
@@ -176,6 +184,10 @@ def build_candidates(
                 "sources": srcs + (["llm"] if seg and "llm" not in srcs else []),
             }
         )
+        if hsig is not None:
+            cands[-1]["hud_events"] = [x for x in hsig["events"] if win["start"] <= x["t"] <= win["end"]]
+    if hud is not None:
+        hud.save()
     return cands
 
 
@@ -222,13 +234,25 @@ def select(cands: list, st: dict, counts: bool = False):
     return picked, len(cands) - len(pool), n_overlap
 
 
-def discover(source: Path, work_dir: Path, st: dict, heatmap=None, source_key: str = None, chat_msgs=None) -> dict:
+def discover(
+    source: Path,
+    work_dir: Path,
+    st: dict,
+    heatmap=None,
+    source_key: str = None,
+    chat_msgs=None,
+    url: str = "",
+    title: str = "",
+) -> dict:
     """
     Story-first discovery on one audio/video file. st keys: max_clips (0 = all), min_score, min_dur,
     max_dur, target_dur, min_pause, db, asr (auto|full|regions|none), whisper_model, device, language,
-    rank_by, llm (none|ollama|gemini), llm_model, chat (tag of the chat source), fresh.
-    chat_msgs = [(t, text)] chat replay. Candidates: every voice peak >= 6 dB, chat spikes without a
-    voice peak (at spike - 6 s) and LLM payoffs; each gets a story window and a score breakdown; the
+    rank_by, llm (none|ollama|gemini), llm_model, chat (tag of the chat source), fresh,
+    hud (auto|off|gta5|gta6|generic; missing = off), hud_profile (a profile JSON path).
+    chat_msgs = [(t, text)] chat replay. url/title: the stream link (HUD frames come from a 360p video-only
+    download when source is audio only) and its title (game auto-detection).
+    Candidates: every voice peak >= 6 dB, chat spikes without a voice peak (at spike - 6 s), strong HUD
+    events and LLM payoffs; each gets a story window and a score breakdown; the
     best non-overlapping ones with score >= min_score are returned (rank order).
     Progress goes to <work_dir>/state.json, so an interrupted run resumes (st['fresh'] starts over).
     Returns {source, duration, transcribed, language, clips, elapsed, meta, asr, state, candidates}.
@@ -256,6 +280,11 @@ def discover(source: Path, work_dir: Path, st: dict, heatmap=None, source_key: s
     dur = env["dur"]
     state.set_stage("envelope", {"dur": round(dur, 2)})
     islands = islands_from_env(env, st["db"], 0.20)
+    hud = None
+    if (st.get("hud") or "off") != "off" or st.get("hud_profile"):
+        from streamclipper.hud.analyze import keyframe_stage  # late import: HUD is optional
+
+        hud = keyframe_stage(source, url, work_dir, state, st, title or source.stem, dur)
     asr = _resolve_asr(st)
     max_clips = int(st.get("max_clips") or 0)
     # every peak is a candidate, except with --asr regions (each candidate costs a transcription)
@@ -267,7 +296,7 @@ def discover(source: Path, work_dir: Path, st: dict, heatmap=None, source_key: s
         chat_spikes = spikes(sig)
         state.set_stage("chat", {"messages": len(chat_msgs), "spikes": len(chat_spikes)})
         print(f"Chat replay: {len(chat_msgs)} messages, {len(chat_spikes)} spikes")
-    if not peaks and not chat_spikes:
+    if not peaks and not chat_spikes and not (hud is not None and hud.strong(DEFAULT_BAR["hud_cue"])):
         raise ToolError(
             "No reaction peaks found (no moment is 6 dB above the stream's usual voice level).",
             "check that the commentary is audible in this video",
@@ -301,8 +330,10 @@ def discover(source: Path, work_dir: Path, st: dict, heatmap=None, source_key: s
             print(f"--llm {provider} needs a transcript (--asr full); skipped.")
 
     cands = build_candidates(
-        env, words, islands, laughs, peaks, sig, chat_spikes, llm_segs, heatmap, st, dur, transcribed=do_asr
+        env, words, islands, laughs, peaks, sig, chat_spikes, llm_segs, heatmap, st, dur, transcribed=do_asr, hud=hud
     )
+    if hud is not None and hud.dense_n:
+        print(f"HUD dense pass: {hud.dense_n} clip windows in {hud.dense_s:.0f} s")
     picked, n_bar, n_overlap = select(cands, st, counts=True)
     if not picked:
         best = max((c["score"] for c in cands), default=0)
@@ -328,6 +359,15 @@ def discover(source: Path, work_dir: Path, st: dict, heatmap=None, source_key: s
         "chat_messages": len(chat_msgs or []),
         "llm": f"{provider}:{model}" if provider != "none" else "none",
     }
+    if hud is not None:
+        res["hud"] = {
+            "profile": hud.name,
+            "experimental": bool(hud.data.get("experimental")),
+            "ocr": bool(hud.data.get("ocr")),
+            "events": len(hud.events),
+            "keyframe_seconds": hud.data.get("seconds"),
+            "dense_seconds": round(hud.dense_s, 1),
+        }
     write_json_atomic(work_dir / "discovery_result.json", res)
     state.set_stage("discovery", {"file": "discovery_result.json", "key": rkey})
     res.update(source=source, meta=meta, state=state)
@@ -376,6 +416,10 @@ def clips_document(res: dict, source_label: str, title: str, st: dict) -> dict:
         if res["transcribed"]:
             item["words"] = [{"w": w["w"], "s": r2(w["s"]), "e": r2(w["e"])} for w in c["words"]]
         item["text"] = " ".join(w["w"] for w in c["words"])
+        if "hud_events" in c:
+            item["hud_events"] = [
+                {"t": r2(x["t"]), "event": x["event"], "label": x.get("label") or x["event"]} for x in c["hud_events"]
+            ]
         clips.append(item)
     return {
         "tool": "streamclipper",
@@ -395,6 +439,7 @@ def clips_document(res: dict, source_label: str, title: str, st: dict) -> dict:
             "asr": res.get("asr", "auto"),
             "llm": res.get("llm", "none"),
             "chat": bool(st.get("chat")),
+            "hud": (res.get("hud") or {}).get("profile") or "off",
         },
         "candidates": res.get("candidates"),
         "clips": clips,
@@ -439,6 +484,8 @@ def _discover_settings(args, transcribe) -> dict:
         "chat": None,
         "content": getattr(args, "content", None) or "gaming",
         "fresh": bool(getattr(args, "fresh", False)),
+        "hud": getattr(args, "hud", None) or "off",
+        "hud_profile": str(Path(args.hud_profile).resolve()) if getattr(args, "hud_profile", None) else None,
     }
     if st["min_dur"] <= 0 or st["max_dur"] < st["min_dur"]:
         raise ToolError(
@@ -450,4 +497,8 @@ def _discover_settings(args, transcribe) -> dict:
             f"--min-score {st['min_score']:g} is outside 0-100.", f"use e.g. --min-score {DEFAULT_BAR['min_score']:g}"
         )
     st["target_dur"] = min(st["max_dur"], max(st["min_dur"], st["target_dur"]))
+    if st["hud_profile"]:
+        from streamclipper.hud.profiles import load_profile
+
+        load_profile(st["hud_profile"])  # a broken profile stops here, before any analysis
     return st

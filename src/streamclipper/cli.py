@@ -14,6 +14,7 @@ from streamclipper.captions.styles import (
 from streamclipper.commands import (
     cmd_analyze,
     cmd_build,
+    cmd_calibrate_hud,
     cmd_clip_stream,
     cmd_discover_clips,
     cmd_doctor,
@@ -24,6 +25,7 @@ from streamclipper.commands import (
 from streamclipper.discovery import ASR_MODES
 from streamclipper.draft.audit import cmd_audit
 from streamclipper.draft.importer import cmd_import_draft
+from streamclipper.hud.analyze import HUD_MODES
 from streamclipper.live.command import add_live_parser, cmd_live
 from streamclipper.llm import PROVIDERS
 from streamclipper.options import OPT_CHOICES
@@ -73,6 +75,19 @@ def _add_asr_flags(p):
         "--device", choices=["auto", "cuda", "cpu"], default="auto", help="Whisper device (auto = CUDA if it works)"
     )
     p.add_argument("--fresh", action="store_true", help="Ignore saved progress (state.json) and start over")
+
+
+def _add_hud_flags(p):
+    p.add_argument(
+        "--hud",
+        choices=list(HUD_MODES),
+        default="auto",
+        help="Game HUD events (WASTED, BUSTED, mission passed, wanted stars) as a clip signal: auto = pick the "
+        "game from the title or the screen (needs the vision extra), off, or a profile (gta6 is experimental)",
+    )
+    p.add_argument(
+        "--hud-profile", default=None, help="Your own HUD profile JSON (e.g. from calibrate-hud); overrides --hud"
+    )
 
 
 def _add_select_flags(p, default_max: int, what: str):
@@ -214,6 +229,7 @@ def build_parser() -> argparse.ArgumentParser:
     dc.add_argument("--language", default="auto", help="Whisper language code (en, hi) or auto")
     dc.add_argument("--db", type=float, default=-48.0, help="RMS speech threshold in dB")
     dc.add_argument("--min-pause", type=float, default=0.55, help="Pauses shorter than this stay inside a sentence")
+    _add_hud_flags(dc)
 
     dv = sub.add_parser("download-vod", help="Download only a slice of a VOD as H.264/AAC MP4 (<= 1080p)")
     dv.add_argument("--url", required=True, help="Video URL (YouTube, Twitch, Kick, ...)")
@@ -258,6 +274,7 @@ def build_parser() -> argparse.ArgumentParser:
     cs.add_argument(
         "--hindi-script", choices=["devanagari", "roman"], default="devanagari", help="How Hindi captions are written"
     )
+    _add_hud_flags(cs)
     _add_layout_flags(cs)
     _add_draft_flags(cs)
 
@@ -339,6 +356,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--close-capcut", action="store_true", help="Force-close CapCut if it is open (unsaved CapCut edits are lost)"
     )
 
+    ch = sub.add_parser(
+        "calibrate-hud",
+        help="Find a game's HUD text regions and words (e.g. GTA 6 after its release) and write a HUD profile JSON",
+    )
+    ch.add_argument("--video", required=True, help="Gameplay video with the HUD events you want (WASTED screens ...)")
+    ch.add_argument("--profile", default="gta6", help="Profile to start from (gta5, gta6, generic or a JSON file)")
+    ch.add_argument("--times", default="", help="Times to read, e.g. 12:34,15:10 (default: every --every seconds)")
+    ch.add_argument("--every", type=float, default=30.0, help="Seconds between sampled frames (default 30)")
+    ch.add_argument("--out", default="", help="Profile JSON to write (default <video>_hud.json)")
+    ch.add_argument("--check", default="", help="Print the detections of this profile JSON on the video instead")
+
     db = sub.add_parser("dashboard", help="Open the local web dashboard: start jobs, watch progress, manage clips")
     db.add_argument("--port", type=int, default=8765, help="Port (default 8765)")
     db.add_argument("--host", default="127.0.0.1", help="Listen address (default 127.0.0.1: this PC only)")
@@ -372,6 +400,7 @@ COMMANDS = {
     "styles": cmd_styles,
     "import-draft": cmd_import_draft,
     "live": cmd_live,
+    "calibrate-hud": cmd_calibrate_hud,
     "dashboard": cmd_dashboard,
 }
 

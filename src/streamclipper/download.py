@@ -84,6 +84,38 @@ def fetch_chat(url: str, work_dir: Path):
     return found()
 
 
+def video_info(url: str) -> dict:
+    """yt-dlp -J metadata of a URL ({} when it cannot be read: callers treat the size as unknown)."""
+    res = run_cmd(ytdlp_cmd() + ["-J", "--no-playlist", url], "yt-dlp metadata fetch", check=False)
+    try:
+        return json.loads(res.stdout) if res.returncode == 0 else {}
+    except ValueError:
+        return {}
+
+
+def download_lowres_video(url: str, work_dir: Path, max_height: int = 360) -> Path:
+    """Video only, <= max_height (for HUD analysis), resumable, cached as <work_dir>/analysis_<h>p.mp4."""
+    work_dir = Path(work_dir)
+    work_dir.mkdir(parents=True, exist_ok=True)
+    stem = f"analysis_{max_height}p"
+    done = [p for p in work_dir.glob(f"{stem}.*") if not p.name.endswith((".part", ".ytdl"))]
+    if done:
+        return done[0]
+    print(f"Downloading a {max_height}p video-only copy for HUD detection ...")
+    run_cmd(
+        ytdlp_cmd()
+        + ["-f", f"bv*[height<={max_height}][ext=mp4]/bv*[height<={max_height}]/wv*", "--no-playlist"]
+        + ["--no-progress", "--continue", "-o", str(work_dir / f"{stem}.%(ext)s"), url],
+        "yt-dlp low-res video download",
+        hint="check the URL/network; update with: python -m pip install -U yt-dlp",
+    )
+    done = [p for p in work_dir.glob(f"{stem}.*") if not p.name.endswith((".part", ".ytdl"))]
+    if not done:
+        raise ToolError("yt-dlp finished but produced no video file.", "python -m pip install -U yt-dlp")
+    print(f"Video for HUD detection: {fwd(done[0])}")
+    return done[0]
+
+
 def download_slice(url: str, start: float, end: float, out: Path, max_height: int = 1080) -> Path:
     """
     Download only [start, end] of a video with yt-dlp, then make sure the result is

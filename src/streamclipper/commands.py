@@ -376,7 +376,16 @@ def clip_stream(args) -> dict:
     n_make = st["max_clips"]
     st["max_clips"] = 0  # every clip goes to clips.json; drafts only for the first n_make
     msgs = _chat_messages(args, work_dir / "analysis", st)
-    res = discover(src, work_dir / "analysis", st, heatmap=heat, source_key=args.url or None, chat_msgs=msgs)
+    res = discover(
+        src,
+        work_dir / "analysis",
+        st,
+        heatmap=heat,
+        source_key=args.url or None,
+        chat_msgs=msgs,
+        url=args.url,
+        title=title if args.url else src.stem,
+    )
     print_clip_table(res["clips"])
     out_json = work_dir / "clips.json"
     doc = clips_document(res, args.url or fwd(src), title if args.url else src.stem, st)
@@ -735,7 +744,9 @@ def cmd_discover_clips(args):
             "Pass --video <file> or --url <link>.", "example: discover-clips --video stream.mp4 --out clips.json"
         )
     msgs = _chat_messages(args, work_dir, st)
-    res = discover(src, work_dir, st, heatmap=heat, source_key=args.url or None, chat_msgs=msgs)
+    res = discover(
+        src, work_dir, st, heatmap=heat, source_key=args.url or None, chat_msgs=msgs, url=args.url, title=title
+    )
     doc = clips_document(res, label, title, st)
     save_clips(out_json, doc, None if args.url else src)
     print_clip_table(res["clips"])
@@ -771,6 +782,30 @@ def cmd_styles(args):
         "--caption-position auto|top|center|lower,\n  --highlight-color COLOUR, --emoji/--no-emoji, "
         "--profanity-filter. Captions use at most 2 lines."
     )
+
+
+def cmd_calibrate_hud(args):
+    """Profile skeleton for a game's HUD (regions + words read by OCR), or --check an edited profile."""
+    from streamclipper.hud import calibrate
+    from streamclipper.hud.ocr import get_recognizer
+    from streamclipper.hud.profiles import load_profile
+
+    video = Path(args.video).resolve()
+    if not video.is_file():
+        raise ToolError(f"Video not found: {video}", "pass a local video file with --video")
+    ocr = get_recognizer()
+    if args.check:
+        calibrate.check(video, load_profile(args.check), ocr)
+        return
+    if ocr is None:
+        raise ToolError(
+            "calibrate-hud needs the OCR model (onnxruntime + a one-time 7.7 MB download).",
+            'python -m pip install -e ".[vision]"',
+        )
+    times = [parse_time(x) for x in args.times.split(",") if x.strip()] if args.times else None
+    out = Path(args.out).resolve() if args.out else video.with_name(f"{video.stem}_hud.json")
+    calibrate.calibrate(video, load_profile(args.profile), ocr, out, times, args.every)
+    print(f"Next: edit {out.name} if needed, then: streamclipper calibrate-hud --video <file> --check {out.name}")
 
 
 def cmd_download_vod(args):

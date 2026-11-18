@@ -5,8 +5,15 @@ from streamclipper.util import CATEGORIES, CATEGORY_RULES, find_talk_triggers, f
 
 # Weights of the breakdown components; the total is renormalised over the components that are available
 # (hook and the speech part of pacing need a transcript, engagement needs chat or a YouTube heatmap).
-SCORE_WEIGHTS = {"hook": 20, "story": 25, "emotion": 25, "pacing": 10, "engagement": 20}
-COMPONENTS = tuple(SCORE_WEIGHTS)
+SCORE_WEIGHTS = {"hook": 20, "story": 25, "emotion": 25, "pacing": 10, "engagement": 20, "hud": 15}
+# The breakdown always has these five; 'hud' (an on-screen game event, see streamclipper.hud) is added only for
+# windows with an event, so clips without one score and print exactly as before.
+COMPONENTS = ("hook", "story", "emotion", "pacing", "engagement")
+HUD_MIN = 0.3  # events weaker than this never make a hud component
+HUD_REASON_WEIGHT = 18.0  # reason weight per unit of event strength ('WASTED on screen' leads the reason)
+# weight of the face signal (facecam movement around the payoff) inside emotion; 0 = recorded but not scored
+# (tuned in the selection eval on unseen streams)
+FACE_MOTION_WEIGHT = 0.0
 # --content talk (podcasts, interviews): what is said matters more than how loud it is
 TALK_WEIGHTS = {"hook": 25, "story": 35, "emotion": 15, "pacing": 15, "engagement": 10}
 CONTENTS = ("gaming", "talk")
@@ -29,6 +36,7 @@ DEFAULT_BAR = {
     "music_max_rate": 0.6,  # below this speech rate ...
     "music_min_voiced": 0.9,  # ... with the audio this full, the window is music or game sound, not talk
     "laugh_exempt": 0.5,  # laughter this strong exempts a window from the speech-rate rules
+    "hud_cue": 0.9,  # an on-screen event this strong (WASTED, BUSTED, mission passed) is a cue like a milestone
 }
 # Achievement lines that make a quiet payoff worth a clip (whole words, lower case; Hindi as Whisper writes it).
 MILESTONE_PHRASES = (
@@ -64,6 +72,7 @@ NO_BAR = {
     "music_max_rate": -1.0,
     "music_min_voiced": 2.0,
     "laugh_exempt": 0.0,
+    "hud_cue": 999.0,
 }  # v2 behaviour (score >= 50 only); tools/eval_selection.py reports it as 'before'
 # Quality bar for --content talk: a calm podcast has no loud payoff, so the clip needs real talk
 # (enough words at a normal rate) and a reason to exist: a strong line, laughter or an LLM pick.
@@ -128,12 +137,15 @@ def score_parts(
     laughs: list = None,
     llm: dict = None,
     content: str = "gaming",
+    hud: dict = None,
 ) -> tuple:
     """
     (score 0-100, breakdown {hook, story, emotion, pacing, engagement} each 0-100 or None when not
-    available, one-line reason, category, signals, comp {component: 0-1, only the available ones}).
+    available (+ hud for a window with an on-screen event), one-line reason, category, signals,
+    comp {component: 0-1, only the available ones}).
     chat = {score 0..1, ratio} from chat.window_score;
     laughs = audio.laughter_bursts(); llm = an LLM segment (story_score, category, hook, ...).
+    hud = {events: [{t, event, label, reason, strength}], face_motion, face_seen} from hud.analyze (gaming only).
     content 'talk' (podcasts): talk triggers (strong statements, reactions, amounts) instead of gaming
     slang, story from a strong line + laughter + a complete ending instead of loudness, TALK_WEIGHTS.
     """
@@ -170,7 +182,11 @@ def score_parts(
         parts.append((0.25, trig))
         if labels:
             why.append((15.0 * trig, "trigger words: " + ", ".join(labels[:3])))
+    face_motion = (hud or {}).get("face_motion")
+    if face_motion is not None:
+        parts.append((FACE_MOTION_WEIGHT, float(face_motion)))
     comp["emotion"] = sum(w * v for w, v in parts) / sum(w for w, _ in parts)
+    hud_sig = _hud_component(comp, why, hud, s0, e)
 
     # story: payoff louder than the setup, the streamer keeps reacting, plus the LLM's story score
     contrast = mean_db(*arc["payoff"]) - mean_db(*arc["setup"])
@@ -207,6 +223,8 @@ def score_parts(
 
     comp = {k: round(v, 3) for k, v in comp.items()}
     breakdown = {k: (int(round(100.0 * comp[k])) if k in comp else None) for k in COMPONENTS}
+    if "hud" in comp:
+        breakdown["hud"] = int(round(100.0 * comp["hud"]))
     texts = [t for w, t in sorted(why, key=lambda x: x[0], reverse=True) if w > 0.5][:3]
     reason = "; ".join(texts) or "loudest moment in this part of the stream"
     zone_words = [w for w in words if w["s"] >= p - 8.0]
@@ -230,7 +248,27 @@ def score_parts(
         signals["heatmap"] = hm_val
     if chat is not None:
         signals.update(chat=round(chat["score"], 3), chat_ratio=round(chat["ratio"], 2))
+    signals.update(hud_sig)
     return combine(comp, signals), breakdown, reason, category, signals, comp
+
+
+def _hud_component(comp: dict, why: list, hud, s0: float, e: float) -> dict:
+    """comp['hud'] = the strongest on-screen event in [s0, e] + 0.1 per extra one (cap 1), only when there is an
+    event >= HUD_MIN; adds its reason ('WASTED on screen'). Returns the signals to add (hud, hud_reason, face)."""
+    if not hud:
+        return {}
+    sig = {}
+    if hud.get("face_motion") is not None:
+        sig.update(face_motion=round(float(hud["face_motion"]), 3), face_seen=round(float(hud["face_seen"] or 0), 3))
+    evs = [x for x in hud.get("events") or [] if s0 <= x["t"] <= e and x["strength"] >= HUD_MIN]
+    if not evs:
+        return sig
+    best = max(evs, key=lambda x: x["strength"])
+    comp["hud"] = min(1.0, best["strength"] + 0.1 * (len(evs) - 1))
+    reason = best.get("reason") or f"{best['label']} on screen"
+    why.append((HUD_REASON_WEIGHT * best["strength"], reason))
+    sig.update(hud=round(best["strength"], 3), hud_reason=reason)
+    return sig
 
 
 def _pacing(segments: list, islands: list, words: list, transcribed: bool, rate=None) -> tuple:
@@ -407,6 +445,11 @@ def passes_bar(cand: dict, bar: dict = None) -> tuple:
         text = " ".join(w["w"] for w in cand.get("words") or [])
     toks = [t for t in (norm_token(w) for w in text.split()) if t]
     cue = milestone(toks) if transcribed else ""
+    hud_cue = comp.get("hud") is not None and float(sig.get("hud") or 0.0) >= b.get("hud_cue", 999.0)
+    if hud_cue and not cue:  # a strong on-screen event explains the moment like a milestone line
+        cue = str(sig.get("hud_reason") or "on-screen event")
+    else:
+        hud_cue = False
     floor = b["cue_min_score"] if (scream or cue) else b["min_score"]
     if score < floor:
         return False, f"score {score} < {floor:g}"
@@ -430,6 +473,8 @@ def passes_bar(cand: dict, bar: dict = None) -> tuple:
                 return False, f"LLM-only pick with {rate:.2f} words/s: no real speech"
             if rate < b["music_max_rate"] and float(sig.get("voiced_after_trim") or 0.0) >= b["music_min_voiced"]:
                 return False, f"music or game sound ({rate:.2f} words/s)"
+    if hud_cue:
+        return True, cue
     return True, ("milestone: " + cue) if cue else ("scream" if scream else "passes the quality bar")
 
 
