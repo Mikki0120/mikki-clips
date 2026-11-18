@@ -355,6 +355,8 @@ def build() -> nbformat.NotebookNode:
         cell.metadata["cellView"] = "form"
         nb.cells.append(cell)
     nb.cells.append(new_markdown_cell(OUTRO))
+    for i, cell in enumerate(nb.cells):
+        cell["id"] = f"cell-{i:02d}"  # stable ids: regenerating gives no git diff
     return nb
 
 
