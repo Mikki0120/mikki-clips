@@ -892,6 +892,13 @@ def cmd_calibrate_hud(args):
     print(f"Next: edit {out.name} if needed, then: streamclipper calibrate-hud --video <file> --check {out.name}")
 
 
+def cmd_publish(args):
+    """publish youtube|instagram|pack|schedule: post with the user's own credentials (or --dry-run)."""
+    from streamclipper.publish.run import cmd
+
+    cmd(args)
+
+
 def cmd_download_vod(args):
     start, end = parse_time(args.start), parse_time(args.end)
     out = Path(args.out)

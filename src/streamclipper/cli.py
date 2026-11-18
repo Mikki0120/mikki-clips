@@ -19,6 +19,7 @@ from streamclipper.commands import (
     cmd_discover_clips,
     cmd_doctor,
     cmd_download_vod,
+    cmd_publish,
     cmd_render,
     cmd_styles,
 )
@@ -30,6 +31,7 @@ from streamclipper.hud.analyze import HUD_MODES
 from streamclipper.live.command import add_live_parser, cmd_live
 from streamclipper.llm import PROVIDERS
 from streamclipper.options import OPT_CHOICES
+from streamclipper.publish.youtube import PRIVACY
 from streamclipper.scoring import CONTENTS, DEFAULT_BAR
 from streamclipper.util import ToolError
 
@@ -221,6 +223,71 @@ def _add_layout_flags(p):
     p.add_argument("--filler-video", default=None, help="Filler video for the hook-grabber bottom panel")
 
 
+def _add_publish_source(p, rank_default=1):
+    p.add_argument("--mp4", default="", help="Rendered clip MP4")
+    p.add_argument("--clips", default="", help="clips.json (title, description and hashtags come from it)")
+    p.add_argument(
+        "--rank", type=int, default=rank_default, help="Clip rank in --clips" + (" (default 1)" if rank_default else "")
+    )
+    p.add_argument("--title", default="", help="Title (default: the clip's title)")
+    p.add_argument("--description", default="", help="Description (default: the clip's description)")
+    p.add_argument("--tags", default="", help="Hashtags, e.g. '#gaming #funny' (default: the clip's hashtags)")
+
+
+def _add_publish_parser(sub):
+    pu = sub.add_parser(
+        "publish",
+        help="Post clips with your own accounts: YouTube Shorts, Instagram Reels, a TikTok publish pack, a week plan",
+        description="Upload with your own API credentials (see docs/GUIDE.md, Publishing). --dry-run prints what "
+        "would be sent and sends nothing.",
+    )
+    ps = pu.add_subparsers(dest="platform_cmd", required=True)
+    yt = ps.add_parser("youtube", help="Upload a clip as a YouTube Short (private by default)")
+    _add_publish_source(yt)
+    yt.add_argument("--privacy", choices=list(PRIVACY), default="private", help="private (default) or unlisted")
+    yt.add_argument(
+        "--publish-at",
+        default="",
+        help="Publish later, e.g. 2026-11-21T18:00 (your local time; the upload is private until then)",
+    )
+    yt.add_argument(
+        "--youtube-credentials",
+        default="",
+        help="client_secret.json of your Google OAuth 'Desktop app' client "
+        "(needed once; the sign-in token is kept in your user config folder)",
+    )
+    yt.add_argument("--dry-run", action="store_true", help="Print the request, send nothing")
+    ig = ps.add_parser("instagram", help="Publish a clip as an Instagram Reel (professional account)")
+    _add_publish_source(ig)
+    ig.add_argument("--caption", default="", help="Caption (default: title, description and hashtags)")
+    ig.add_argument(
+        "--instagram-credentials", default="", help='JSON file {"ig_user_id", "access_token", "graph_version"}'
+    )
+    ig.add_argument("--dry-run", action="store_true", help="Print the request, send nothing")
+    pk = ps.add_parser("pack", help="TikTok publish pack: MP4 + caption.txt + hashtags.txt + best_time.txt")
+    _add_publish_source(pk, rank_default=None)
+    pk.add_argument("--caption", default="", help="Caption (default: title, description and hashtags)")
+    pk.add_argument("--out", default="", help="Folder for publish_pack/ (default: next to the MP4s)")
+    sc = ps.add_parser("schedule", help="Plan a week of posts (YouTube publishes them itself) and upload them")
+    sc.add_argument("--clips", required=True, help="clips.json; every rendered clip, best first")
+    sc.add_argument("--platform", choices=["youtube", "pack", "instagram"], default="youtube", help="Where to post")
+    sc.add_argument("--start", default="tomorrow", help="First day: YYYY-MM-DD, today or tomorrow (default)")
+    sc.add_argument("--per-day", type=int, default=1, help="Clips per day (default 1)")
+    sc.add_argument(
+        "--times",
+        default="",
+        help="Local posting times, e.g. 18:00,20:30 (default: weekdays 18:00-21:00, weekends "
+        "11:00-13:00, a common heuristic)",
+    )
+    sc.add_argument("--privacy", choices=list(PRIVACY), default="private", help=argparse.SUPPRESS)
+    sc.add_argument("--youtube-credentials", default="", help="client_secret.json (needed once)")
+    sc.add_argument(
+        "--out", default="", help="Folder for publish_schedule.json and packs (default: next to clips.json)"
+    )
+    sc.add_argument("--dry-run", action="store_true", help="Only write and print the plan, send nothing")
+    return pu
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="CapCut Desktop studio and stream clipper CLI")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -401,6 +468,8 @@ def build_parser() -> argparse.ArgumentParser:
     ch.add_argument("--out", default="", help="Profile JSON to write (default <video>_hud.json)")
     ch.add_argument("--check", default="", help="Print the detections of this profile JSON on the video instead")
 
+    _add_publish_parser(sub)
+
     db = sub.add_parser("dashboard", help="Open the local web dashboard: start jobs, watch progress, manage clips")
     db.add_argument("--port", type=int, default=8765, help="Port (default 8765)")
     db.add_argument("--host", default="127.0.0.1", help="Listen address (default 127.0.0.1: this PC only)")
@@ -435,6 +504,7 @@ COMMANDS = {
     "import-draft": cmd_import_draft,
     "live": cmd_live,
     "calibrate-hud": cmd_calibrate_hud,
+    "publish": cmd_publish,
     "dashboard": cmd_dashboard,
 }
 

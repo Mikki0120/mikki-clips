@@ -141,6 +141,7 @@ def list_clips(store, job_id: str, statuses: dict = None) -> list:
                 "draft": draft if draft and (jdir / "capcut_drafts" / draft).is_dir() else "",
                 "imported": (job.get("imported") or {}).get(key),
                 "mark": marks.get(key),
+                "publish": dict((job.get("publish") or {}).get(key) or {}),
                 "variants": variants,
             }
         )

@@ -31,7 +31,7 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 from streamclipper import paths
 from streamclipper.captions.styles import AUTO_STYLE, DEFAULT_HOOK_STYLE, HOOK_STYLES, STYLES
-from streamclipper.dashboard import brandkit, editor, library
+from streamclipper.dashboard import brandkit, editor, library, publishing
 from streamclipper.dashboard.jobs import (
     JobStore,
     Runner,
@@ -245,6 +245,7 @@ class DashboardServer(ThreadingHTTPServer):
         self.doctor_lock = threading.Lock()
         self.reframe_lock = threading.Lock()
         self.reframes = {}  # (job, clip key) -> Auto-reframe state of the editor
+        self.publisher = publishing.Publisher(self.store)  # uploads and Settings > Publishing (this PC only)
         self.card_cache = {}  # job id -> (signature, {thumb_url, clip_count}) for the Projects grid
         super().__init__(addr, Handler)
         from streamclipper import env as _env
@@ -376,11 +377,13 @@ class Handler(BaseHTTPRequestHandler):
         try:
             try:
                 self._route(method)
-            except (HttpError, ToolError, KeyError):
+            except (HttpError, ToolError, KeyError, publishing.Busy):
                 self._drain()
                 raise
         except HttpError as e:
             self._send_json(e.status, {"error": e.message})
+        except publishing.Busy as e:
+            self._send_json(409, {"error": str(e)})
         except library.CapCutOpen as e:
             self._send_json(409, {"error": str(e), "hint": e.hint})
         except ToolError as e:
@@ -525,8 +528,12 @@ class Handler(BaseHTTPRequestHandler):
         if len(api) == 3 and api[0] == "jobs" and api[2] == "clips":
             statuses = {j["id"]: j["status"] for j in srv.store.list()}
             job = srv.store.get(check_job_id(api[1]))
-            clips = library.list_clips(srv.store, api[1], statuses)
+            clips = srv.publisher.decorate(api[1], library.list_clips(srv.store, api[1], statuses))
             return self._send_json(200, {"job": self._public_job(job), "clips": clips, "lan": srv.lan})
+        if len(api) == 5 and api[0] == "jobs" and api[2] == "clips" and api[4] == "publish":
+            self._local_only()
+            job_id, key = check_job_id(api[1]), library.check_key(api[3])
+            return self._send_json(200, srv.publisher.status(job_id, key))
         if (
             len(api) == 5
             and api[0] == "jobs"
@@ -555,6 +562,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_json(200, self._settings())
         if api == ["brand"]:
             return self._send_json(200, brandkit.read(srv.ws, srv.lan))
+        if api == ["publish"]:
+            self._local_only()
+            return self._send_json(200, srv.publisher.settings())
         if api == ["doctor"]:
             with srv.doctor_lock:
                 return self._send_json(200, dict(srv.doctor))
@@ -584,8 +594,16 @@ class Handler(BaseHTTPRequestHandler):
                 srv.runner.resume(job_id)
                 return self._send_json(200, {"status": "queued"})
             raise HttpError(404, "Not found.")
+        if len(api) == 4 and api[0] == "jobs" and api[2:] == ["publish", "schedule"]:
+            self._local_only()
+            job_id = check_job_id(api[1])
+            srv.store.get(job_id)
+            return self._send_json(*srv.publisher.schedule(job_id, body))
         if len(api) == 5 and api[0] == "jobs" and api[2] == "clips":
             return self._clip_action(check_job_id(api[1]), library.check_key(api[3]), api[4], body)
+        if len(api) == 3 and api[0] == "publish" and api[1] in ("youtube", "instagram"):
+            self._local_only()
+            return self._send_json(*srv.publisher.action(api[1], api[2], body))
         if api == ["settings"]:
             return self._send_json(200, self._save_settings(body))
         if api == ["brand"]:
@@ -891,12 +909,19 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_json(200, res)
         if action == "reframe":
             return self._send_json(202, self._start_reframe(job_id, key, body.get("edit")))
+        if action == "publish":
+            self._local_only()
+            return self._send_json(202, srv.publisher.start(job_id, key, body))
         if action == "delete":
             if job.get("status") in ("running", "queued") or srv.runner.running_id() == job_id:
                 raise ToolError("This job is still running.", "wait until it has finished, then delete clips")
             moved = library.delete_clip(srv.store, srv.ws, job_id, key, parse_bool(body.get("confirm"), "confirm"))
             return self._send_json(200, {"moved": moved, "trash": "trash/" + job_id})
         raise HttpError(404, "Not found.")
+
+    def _local_only(self) -> None:
+        if self.server.lan:
+            raise HttpError(403, publishing.LAN_MSG)
 
     def _settings(self) -> dict:
         from streamclipper.env import find_draft_root

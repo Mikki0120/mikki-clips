@@ -1254,6 +1254,227 @@ function shareModal(body, what) {
   openModal(`Share ${what}`, h("div", { class: "stack" }, h("p", { class: "muted", text: "Works for people on the same Wi-Fi/network. The link is shown once." }), h("div", { class: "row tight end" }, field("Link expires after", days), make), out), []);
 }
 
+// ---- publishing (this PC only; the server refuses it on the network) --------------------------------------
+
+const PUB_NAMES = { youtube: "YouTube", instagram: "Instagram", pack: "TikTok pack" };
+
+function fmtWhen(iso) {
+  const d = new Date(iso);
+  return isNaN(d) ? String(iso || "") : d.toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+function localDate(d) {
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+function pubChips(pub) {
+  return Object.entries(pub || {}).map(([p, e]) => {
+    const name = PUB_NAMES[p] || p;
+    let text = `${name} failed: ${e.message || "error"}`, cls = "chip pub-chip warn-chip", ic = "alert-triangle";
+    if (e.state === "uploading") [text, cls, ic] = [`${name}: uploading ...`, "chip pub-chip", "upload"];
+    else if (e.state === "scheduled") [text, cls, ic] = [`${name}: scheduled ${fmtWhen(e.publish_at)}`, "chip pub-chip ok-chip", "clock"];
+    else if (e.state === "uploaded") [text, cls, ic] = [`${name}: uploaded (${e.privacy || "private"})`, "chip pub-chip ok-chip", "send"];
+    else if (e.state === "published") [text, cls, ic] = [`${name}: published`, "chip pub-chip ok-chip", "send"];
+    else if (e.state === "packed") [text, cls, ic] = [`${name} ready`, "chip pub-chip ok-chip", "folder"];
+    const chip = h("span", { class: cls, title: [text, e.hint, e.folder].filter(Boolean).join("\n") }, icon(ic, 12), h("span", { class: "ellipsis", text }));
+    return e.url ? h("a", { href: e.url, target: "_blank", rel: "noopener", class: "pub-link", "aria-label": `${text} (opens YouTube)` }, chip) : chip;
+  });
+}
+
+async function publishModal(job, c, refresh) {
+  let s;
+  try {
+    s = await api("GET", "/api/publish");
+  } catch (e) {
+    return fail(e);
+  }
+  const tags = (c.hashtags || []).join(" ");
+  const first = s.youtube.connected ? "youtube" : s.instagram.connected ? "instagram" : "pack";
+  const platSel = sel([["youtube", "YouTube Shorts"], ["instagram", "Instagram Reels"], ["pack", "TikTok publish pack (you post it)"]], first, { id: "pub-platform" });
+  const titleIn = h("input", { type: "text", maxLength: 100, value: c.title || c.hook_headline || "", id: "pub-title" });
+  const descIn = h("textarea", { id: "pub-desc", maxLength: 4500 });
+  descIn.value = c.description || "";
+  const tagsIn = h("input", { type: "text", value: tags, id: "pub-tags", placeholder: "#gaming #clips" });
+  const privSel = sel([["private", "Private (only you)"], ["unlisted", "Unlisted (anyone with the link)"]], "private", { id: "pub-privacy" });
+  const atIn = h("input", { type: "datetime-local", id: "pub-at" });
+  const capIn = h("textarea", { id: "pub-caption", maxLength: 2200, rows: 6 });
+  capIn.value = [c.title || c.hook_headline, c.description, tags].filter(Boolean).join("\n\n");
+  const note = h("div", { class: "stack" });
+  const ytRow = h("div", { class: "grid2" }, field("Privacy", privSel), field("Publish at (optional)", atIn, "Your local time. A scheduled video stays private until then."));
+  const textBox = h("div", { class: "stack" }, field("Title", titleIn, "At most 100 characters. #Shorts is added to the description."), field("Description", descIn), field("Hashtags", tagsIn), ytRow);
+  const capBox = h("div", { class: "stack" }, field("Caption", capIn, "At most 2,200 characters and 30 hashtags."));
+  const go = h("button", { class: "btn primary", type: "button", id: "pub-go" });
+  const draw = () => {
+    const p = platSel.value;
+    const conn = p === "pack" ? null : s[p];
+    textBox.hidden = p === "instagram";
+    ytRow.hidden = p !== "youtube";
+    capBox.hidden = p !== "instagram";
+    go.replaceChildren(icon(p === "pack" ? "folder" : "send", 16), p === "pack" ? "Make pack" : "Publish");
+    go.disabled = !!(conn && !conn.connected);
+    note.replaceChildren(
+      ...[
+        conn && !conn.connected ? h("p", { class: "hint warn-hint" }, icon("info", 14), h("span", {}, `${PUB_NAMES[p]} is not connected yet. `, h("a", { href: "#/settings", text: "Connect it in Settings" }), ".")) : null,
+        conn && conn.connected ? h("p", { class: "hint", text: `Posts to ${conn.account || "your account"}.` }) : null,
+        p === "pack" ? h("p", { class: "hint", text: "TikTok's posting API needs an app review, so you get a folder with the MP4, caption, hashtags and a best-time note to post from the TikTok app." }) : null,
+      ].filter(Boolean)
+    );
+  };
+  platSel.addEventListener("change", draw);
+  const m = openModal(`Publish ${c.title || c.key}`, h("div", { class: "stack pub-form" }, field("Where", platSel), note, textBox, capBox), [go]);
+  draw();
+  go.addEventListener("click", async () => {
+    const p = platSel.value;
+    const body = p === "instagram" ? { platform: p, caption: capIn.value } : { platform: p, title: titleIn.value, description: descIn.value, tags: tagsIn.value };
+    if (p === "youtube") Object.assign(body, { privacy: privSel.value, publish_at: atIn.value });
+    go.disabled = true;
+    try {
+      await api("POST", `/api/jobs/${enc(job.id)}/clips/${enc(c.key)}/publish`, body);
+      toast(p === "pack" ? "Making the publish pack ..." : `Uploading to ${PUB_NAMES[p]} ... The clip card shows when it is done.`, "ok");
+      m.close(true);
+      refresh(true);
+    } catch (e) {
+      fail(e);
+      go.disabled = false;
+    }
+  });
+}
+
+async function scheduleModal(job, refresh) {
+  let s;
+  try {
+    s = await api("GET", "/api/publish");
+  } catch (e) {
+    return fail(e);
+  }
+  const url = `/api/jobs/${enc(job.id)}/publish/schedule`;
+  const platSel = sel([["youtube", "YouTube Shorts (YouTube publishes each at its time)"], ["pack", "TikTok publish packs (you post them)"]], s.youtube.connected ? "youtube" : "pack", { id: "sch-platform" });
+  const startIn = h("input", { type: "date", value: localDate(new Date(Date.now() + 864e5)), id: "sch-start" });
+  const perSel = sel(["1", "2", "3"], "1", { id: "sch-per" });
+  const timesIn = h("input", { type: "text", id: "sch-times", placeholder: "Suggested times" });
+  const out = h("div", { class: "stack sch-plan", id: "sch-plan" });
+  const prev = h("button", { class: "btn", type: "button", id: "sch-preview" }, icon("clock", 16), "Show plan");
+  const go = h("button", { class: "btn primary", type: "button", id: "sch-go", disabled: true }, icon("send", 16), "Schedule");
+  const body = () => ({ platform: platSel.value, start: startIn.value, per_day: Number(perSel.value), times: timesIn.value });
+  const reset = () => ((go.disabled = true), out.replaceChildren());
+  [platSel, startIn, perSel, timesIn].forEach((x) => x.addEventListener("input", reset));
+  prev.addEventListener("click", async () => {
+    prev.disabled = true;
+    try {
+      const r = await api("POST", url, body());
+      const ytOff = r.platform === "youtube" && !s.youtube.connected;
+      out.replaceChildren(
+        ...[
+          r.slots.length
+            ? h("div", { class: "table-wrap" }, h("table", {}, h("thead", {}, h("tr", {}, h("th", { text: "When" }), h("th", { text: "Clip" }))), h("tbody", {}, r.slots.map((x) => h("tr", {}, h("td", { class: "when", text: x.label }), h("td", { class: "detail", text: x.title }))))))
+            : h("p", { class: "muted", text: "Nothing to plan: every rendered clip is already published there (rejected clips are skipped)." }),
+          r.left ? h("p", { class: "hint", text: `${r.left} clip(s) do not fit into this week. Add more clips per day or more times.` }) : null,
+          ytOff ? h("p", { class: "hint warn-hint" }, icon("info", 14), h("span", {}, "YouTube is not connected yet. ", h("a", { href: "#/settings", text: "Connect it in Settings" }), ".")) : null,
+        ].filter(Boolean)
+      );
+      go.disabled = !r.slots.length || ytOff;
+      go.replaceChildren(icon("send", 16), r.slots.length ? `Schedule ${r.slots.length} clip${r.slots.length > 1 ? "s" : ""}` : "Schedule");
+    } catch (e) {
+      fail(e);
+    } finally {
+      prev.disabled = false;
+    }
+  });
+  const m = openModal(
+    "Schedule week",
+    h(
+      "div",
+      { class: "stack" },
+      h("p", { class: "muted", text: "Spreads the rendered clips over the next 7 days, best first. YouTube uploads happen now and stay private until their time." }),
+      field("Where", platSel),
+      h("div", { class: "grid3" }, field("First day", startIn), field("Clips per day", perSel), field("Times (optional)", timesIn, "e.g. 18:00, 20:30")),
+      h("p", { class: "hint", text: "Suggested times: weekdays 18:00-21:00, weekends 11:00-13:00 (a common heuristic, not measured on your audience)." }),
+      h("div", {}, prev),
+      out
+    ),
+    [go]
+  );
+  go.addEventListener("click", async () => {
+    go.disabled = true;
+    try {
+      const r = await api("POST", url, { ...body(), confirm: true });
+      toast(`Scheduling ${r.slots.length} clip${r.slots.length > 1 ? "s" : ""} ... The clip cards show each result.`, "ok");
+      m.close(true);
+      refresh();
+    } catch (e) {
+      fail(e);
+      go.disabled = false;
+    }
+  });
+}
+
+// Settings > Publishing: paths of the user's own credential files; the token stays in the user config folder
+async function publishCard(box) {
+  if (LAN) {
+    box.replaceChildren(h("p", { class: "muted", text: "Publishing works only on this PC." }));
+    return;
+  }
+  let s;
+  try {
+    s = await api("GET", "/api/publish");
+  } catch (e) {
+    box.replaceChildren(errorBox(e));
+    return;
+  }
+  const y = s.youtube, g = s.instagram;
+  const chip = (ok, text) => h("span", { class: "chip " + (ok ? "ok-chip" : "warn-chip") }, icon(ok ? "check" : "info", 12), text);
+  const act = async (path, body, msg) => {
+    try {
+      const r = await api("POST", path, body || {});
+      if (msg) toast(typeof msg === "function" ? msg(r) : msg, "ok");
+    } catch (e) {
+      fail(e);
+    }
+    publishCard(box);
+  };
+  const ytIn = h("input", { type: "text", id: "pub-yt-file", value: y.client_file, placeholder: "D:\\keys\\client_secret_1234.json" });
+  const ytGo = h("button", { class: "btn primary", type: "button", id: "pub-yt-connect", disabled: y.connecting }, icon("youtube", 16), y.connected ? "Reconnect YouTube" : "Connect YouTube");
+  const ytOff = h("button", { class: "btn ghost", type: "button", id: "pub-yt-off", text: "Disconnect" });
+  ytGo.addEventListener("click", async () => {
+    ytGo.disabled = true;
+    try {
+      await api("POST", "/api/publish/youtube/connect", { client_file: ytIn.value });
+      toast("Sign in to Google in the browser window that opened.", "ok");
+    } catch (e) {
+      fail(e);
+    }
+    publishCard(box);
+  });
+  ytOff.addEventListener("click", async () => {
+    if (await confirmModal("Disconnect YouTube?", "The saved sign-in is deleted from this PC. Uploaded videos stay on YouTube.", "Disconnect")) act("/api/publish/youtube/disconnect", {}, "YouTube disconnected.");
+  });
+  const igIn = h("input", { type: "text", id: "pub-ig-file", value: g.credentials_file, placeholder: "D:\\keys\\instagram.json" });
+  const igGo = h("button", { class: "btn primary", type: "button", id: "pub-ig-connect" }, icon("send", 16), g.connected ? "Check again" : "Connect Instagram");
+  const igOff = h("button", { class: "btn ghost", type: "button", id: "pub-ig-off", text: "Disconnect" });
+  igGo.addEventListener("click", () => ((igGo.disabled = true), act("/api/publish/instagram/connect", { credentials_file: igIn.value }, (r) => `Instagram connected: ${r.instagram.account}`)));
+  igOff.addEventListener("click", () => act("/api/publish/instagram/disconnect", {}, "Instagram disconnected. Your credentials file was not touched."));
+  box.replaceChildren(
+    h(
+      "div",
+      { class: "pub-acc", id: "pub-youtube" },
+      h("div", { class: "pub-acc-head" }, icon("youtube", 18), h("strong", { text: "YouTube Shorts" }), chip(y.connected, y.connected ? `Connected: ${y.account || "your account"}` : y.connecting ? "Waiting for the sign-in ..." : "Not connected")),
+      field("OAuth client file (client_secret.json)", ytIn, "Your own Google Cloud OAuth client of type Desktop app. The sign-in opens in this PC's browser."),
+      y.error ? h("p", { class: "err", text: y.error }) : null,
+      h("div", { class: "row tight" }, ytGo, y.connected ? ytOff : null)
+    ),
+    h(
+      "div",
+      { class: "pub-acc", id: "pub-instagram" },
+      h("div", { class: "pub-acc-head" }, icon("send", 18), h("strong", { text: "Instagram Reels" }), chip(g.connected, g.connected ? `Connected: @${g.account}` : "Not connected")),
+      field("Credentials file (JSON)", igIn, 'A file with "ig_user_id", "access_token" and "graph_version" of a professional account with instagram_content_publish.'),
+      h("div", { class: "row tight" }, igGo, g.connected ? igOff : null)
+    ),
+    h("p", { class: "hint" }, `TikTok: use "TikTok publish pack" in a clip's Publish dialog. Sign-ins are kept in ${s.config_dir} and never shown here. `, h("a", { href: GUIDE + "#publishing", target: "_blank", rel: "noopener", text: "How to set it up" }))
+  );
+  if (y.connecting) setTimeout(() => document.contains(box) && publishCard(box), 2000);
+}
+
 function scoreClass(s) {
   return s >= 80 ? "s-hi" : s >= 60 ? "s-mid" : s >= 40 ? "s-warn" : "s-low";
 }
@@ -1338,6 +1559,8 @@ function clipCard(job, c, lan, refresh) {
     });
   };
   const more = () => [
+    !lan ? { label: "Publish", icon: "upload", disabled: !c.mp4_url, title: c.mp4_url ? null : "Render the clip first", onClick: () => publishModal(job, c, refresh) } : null,
+    !lan ? "-" : null,
     { label: c.mark === "posted" ? "Unmark posted" : "Mark as posted", icon: "send", onClick: () => post("mark", { mark: c.mark === "posted" ? null : "posted" }, c.mark === "posted" ? "Mark removed." : "Marked as posted.") },
     { label: c.mark === "rejected" ? "Unmark rejected" : "Mark as rejected", icon: "ban", onClick: () => post("mark", { mark: c.mark === "rejected" ? null : "rejected" }, c.mark === "rejected" ? "Mark removed." : "Marked as rejected.") },
     "-",
@@ -1381,6 +1604,7 @@ function clipCard(job, c, lan, refresh) {
       h("div", { class: "clip-title", title, text: title }),
       c.latency_s !== null && c.latency_s !== undefined ? h("div", { class: "small muted", text: `Ready ${Math.round(c.latency_s)} s after the moment` }) : null,
       c.imported ? h("div", { class: "hint", text: `In CapCut as '${c.imported}'.` }) : null,
+      c.publish && Object.keys(c.publish).length ? h("div", { class: "pub-row" }, pubChips(c.publish)) : null,
       h(
         "div",
         { class: "clip-actions" },
@@ -1468,6 +1692,7 @@ async function pageProject(root, id) {
         { class: "row tight" },
         pill(job.status),
         ...jobActions(job, () => refresh(true)),
+        !d.lan && d.clips.some((c) => c.mp4_url) ? h("button", { class: "btn sm", type: "button", id: "schedule-week", onclick: () => scheduleModal(job, () => refresh(true)) }, icon("clock", 14), "Schedule week") : null,
         canShare ? h("button", { class: "btn sm", type: "button", onclick: () => shareModal({ kind: "job", job: job.id }, "all clips") }, icon("share-2", 14), "Share all") : null,
         d.clips.length ? h("a", { class: "btn sm", href: `/files/${enc(job.id)}/out/clips.csv?download=1` }, icon("download", 14), "clips.csv") : null
       )
@@ -1722,6 +1947,7 @@ async function pageSettings(root) {
   };
   const sharesBox = h("div", { class: "stack" }, skeleton("line", 2));
   const brandBox = h("div", { class: "stack", id: "brand-kit" }, skeleton("line", 2));
+  const pubBox = h("div", { class: "stack", id: "publishing" }, skeleton("line", 2));
   const doctorBox = h("div");
   const row = (k, v, extra) => h("div", { class: "kv" }, h("span", { class: "k", text: k }), h("span", { class: "v mono", text: v }), extra || null);
   const status = (ok, text) => h("span", { class: "chip " + (ok ? "ok-chip" : "warn-chip") }, icon(ok ? "check" : "info", 12), text);
@@ -1749,6 +1975,7 @@ async function pageSettings(root) {
         s.gemini === "set" ? null : h("p", { class: "hint", text: "To use Gemini, set GEMINI_API_KEY before you start the dashboard. The key is never shown here." })
       ),
       section("palette", "Brand kit", "Logo, handle, font, colours and intro/outro cards. Turn it on per project under Advanced on Home.", brandBox),
+      section("upload", "Publishing", "Post clips with your own YouTube and Instagram accounts. Uploads are private unless you pick unlisted.", pubBox),
       section("share-2", "Share links", s.mode === "lan" ? "Network mode: links work for people on the same Wi-Fi." : "This PC only.", sharesBox),
       section("shield-check", "System check", "Checks Python, ffmpeg, Whisper, the GPU and CapCut.", h("div", {}, bDoc), doctorBox)
     )
@@ -1806,6 +2033,7 @@ async function pageSettings(root) {
     );
   };
   brandCard(brandBox);
+  publishCard(pubBox);
   await loadShares();
 }
 

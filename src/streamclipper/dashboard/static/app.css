@@ -168,8 +168,8 @@ main { width: 100%; max-width: 1320px; margin: 0 auto; padding: var(--space-7) v
 .field { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
 .field > span, .label { font-size: 12px; font-weight: 650; color: var(--text-2); letter-spacing: .01em; }
 .label { text-transform: uppercase; letter-spacing: .06em; font-size: 11px; }
-input[type=text], input[type=number], input[type=url], select { height: 40px; }
-input[type=text], input[type=number], input[type=url], select, textarea {
+input[type=text], input[type=number], input[type=url], input[type=date], input[type=datetime-local], select { height: 40px; }
+input[type=text], input[type=number], input[type=url], input[type=date], input[type=datetime-local], select, textarea {
   width: 100%; min-height: 40px; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong);
   background: var(--surface-1); color: var(--text); font: inherit; transition: border-color var(--ease), box-shadow var(--ease);
 }
@@ -686,3 +686,15 @@ table.keys td:first-child { white-space: nowrap; width: 1%; }
 .adv-effects { border-top: 1px solid var(--border, rgba(127,127,127,.25)); padding-top: 12px; margin-top: 4px; }
 .adv-sub { font-size: 14px; font-weight: 650; margin: 0; }
 .warn-hint { background: var(--warn-soft); color: var(--warn); padding: 8px 10px; border-radius: 8px; display: flex; gap: 6px; align-items: flex-start; }
+.warn-hint a { color: inherit; font-weight: 700; }
+
+/* publishing: status chips on clip cards, Settings > Publishing accounts, Schedule week plan */
+.pub-row { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.pub-chip { max-width: 100%; min-width: 0; }
+.pub-chip .ellipsis { min-width: 0; }
+a.pub-link { text-decoration: none; max-width: 100%; display: inline-flex; }
+.pub-acc { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: var(--space-3) var(--space-4); display: grid; gap: var(--space-3); background: var(--surface-2); }
+.pub-acc-head { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.pub-acc-head strong { margin-right: auto; }
+.sch-plan table { width: 100%; }
+.sch-plan td.when { white-space: nowrap; font-variant-numeric: tabular-nums; }
