@@ -151,6 +151,27 @@ def build_candidates(
     cands = []
     for (pk, srcs), win, seg in zip(marks, wins, attached, strict=True):
         p = pk["t"]
+        # When the LLM found a real story, use its contextual setup/payoff/reaction timestamps
+        # instead of forcing the moment into the short audio-peak window. This is what lets
+        # a clip breathe for 30–120 seconds when the story genuinely needs that context.
+        if seg:
+            story_start = max(0.0, min(float(seg.get("setup_t", win["start"])), p - 2.0))
+            story_end = min(dur, max(float(seg.get("end_t", win["end"])), p + 2.0))
+            max_story = float(st.get("max_dur", 120.0))
+            if story_end - story_start > max_story:
+                story_start = max(0.0, story_end - max_story)
+            if story_end - story_start >= float(st.get("min_dur", 20.0)):
+                win = {
+                    **win,
+                    "start": story_start,
+                    "end": story_end,
+                    "arc": {
+                        "setup": [story_start, max(story_start, p - 5.0)],
+                        "tension": [max(story_start, p - 5.0), max(story_start, p - 1.0)],
+                        "payoff": [max(story_start, p - 1.0), min(story_end, p + 1.0)],
+                        "reaction": [min(story_end, p + 1.0), story_end],
+                    },
+                }
         isl = i_idx(p)
         near_w = w_idx(p)
         segs = snap_segments(trim_pauses(win, isl, st["min_pause"], (p - 3.0, p + 1.5)), near_w, 0.0, dur)
