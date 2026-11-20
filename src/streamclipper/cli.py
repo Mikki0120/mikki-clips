@@ -313,11 +313,11 @@ def build_parser() -> argparse.ArgumentParser:
     dc.add_argument("--video", "--input", dest="video", default="", help="Local stream video")
     dc.add_argument("--out", required=True, help="Output clips.json (or a folder)")
     _add_select_flags(dc, 0, "clips")
-    dc.add_argument("--min-dur", type=float, default=15.0, help="Shortest clip in seconds")
+    dc.add_argument("--min-dur", type=float, default=20.0, help="Shortest clip in seconds")
     dc.add_argument(
-        "--max-dur", type=float, default=60.0, help="Longest clip in seconds (rendered clips stay <= 59.5 s)"
+        "--max-dur", type=float, default=120.0, help="Longest story clip in seconds (up to 2 minutes)"
     )
-    dc.add_argument("--target-dur", type=float, default=30.0, help="Preferred clip length in seconds")
+    dc.add_argument("--target-dur", type=float, default=60.0, help="Preferred story clip length in seconds")
     tg = dc.add_mutually_exclusive_group()
     tg.add_argument(
         "--transcribe", dest="transcribe", action="store_true", default=None, help="Force Whisper word timestamps"
@@ -354,10 +354,10 @@ def build_parser() -> argparse.ArgumentParser:
     cs.add_argument("--font", choices=list(OPT_CHOICES["font"]), default=None, help="Old name of --caption-font")
     cs.add_argument("--hook-text", default="", help="Hook banner text; \\n starts a new line (default: auto)")
     _add_select_flags(cs, 3, "drafts (all clips go to clips.json)")
-    cs.add_argument("--target-dur", type=float, default=30.0, help="Target clip duration in seconds")
-    cs.add_argument("--min-dur", type=float, default=15.0, help="Shortest clip in seconds")
+    cs.add_argument("--target-dur", type=float, default=60.0, help="Target story clip duration in seconds")
+    cs.add_argument("--min-dur", type=float, default=20.0, help="Shortest clip in seconds")
     cs.add_argument(
-        "--max-dur", type=float, default=60.0, help="Longest clip in seconds (rendered clips stay <= 59.5 s)"
+        "--max-dur", type=float, default=120.0, help="Longest story clip in seconds (up to 2 minutes)"
     )
     cs.add_argument("--db", type=float, default=-48.0, help="RMS gate in dB")
     cs.add_argument("--min-pause", type=float, default=0.55, help="Pauses shorter than this stay inside a clip")

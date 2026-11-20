@@ -126,6 +126,7 @@ def _clip_argv(source: str, work: Path, o: dict) -> list:
             )
         argv += ["--input", str(src.resolve())]
     argv += ["--max-clips", str(int(o["max_clips"])), "--min-score", str(float(o["min_score"]))]
+    argv += ["--min-dur", str(float(o["min_dur"])), "--target-dur", str(float(o["target_dur"])), "--max-dur", str(float(o["max_dur"]))]
     argv += ["--llm", o["llm"], "--whisper-model", o["whisper_model"]]
     argv += ["--device", o["device"], "--language", o["language"]]
     for flag, key in (
@@ -186,6 +187,9 @@ def run_pipeline(
     enhance_speech: str = "off",
     brand_kit: str = "",
     hud: str = "auto",
+    min_dur: float = 20.0,
+    target_dur: float = 60.0,
+    max_dur: float = 120.0,
 ) -> dict:
     """
     Stream -> ranked clips (clips.json, clips.csv, index.html) -> MP4s + thumbnails (render) -> portable
@@ -226,6 +230,9 @@ def run_pipeline(
         "enhance_speech": enhance_speech or "off",
         "brand_kit": str(brand_kit or "").strip(),
         "hud": hud or "auto",
+        "min_dur": float(min_dur),
+        "target_dur": float(target_dur),
+        "max_dur": float(max_dur),
     }
     if opts["brand_kit"] and not Path(opts["brand_kit"]).is_file():
         raise ToolError("The brand kit file was not found.", "check the brand_kit path, or leave it empty")
@@ -246,12 +253,11 @@ def run_pipeline(
 
     result = collect_outputs(out, summary, droot if drafts else None)
     failed = [name for name, ok in summary["gate"] if not ok]
+    # A failed export must not hide the clips that passed. Returning the report lets Colab
+    # display the successful previews and the user inspect the failed clip's diagnostics.
+    result["failed_mp4s"] = failed
     if failed:
-        raise ToolError(
-            f"{len(failed)} MP4(s) failed the export gate: {', '.join(failed)} (see the tables above). "
-            "The other outputs are saved.",
-            f"check {fwd(out)}; re-run with other settings or skip those clips",
-        )
+        print(f"WARNING: {len(failed)} MP4 export(s) failed: {', '.join(failed)}. Successful clips and reports are still available.")
     return result
 
 

@@ -104,8 +104,13 @@ def build_prompt(text: str, language: str = "en", content: str = "gaming") -> st
     return (
         "You are a short-form video editor. Below is part of a live-stream transcript; each line starts with "
         "its [mm:ss] time in the stream.\n"
-        "Find every moment that can be a viral 15-45 second vertical clip with a clear story: setup, tension, "
-        "payoff, reaction.\n"
+        "Find only genuinely entertaining, self-contained 30-120 second gaming stories. Preserve the full "
+        "context a new viewer needs, the streamer’s setup/commentary, rising tension or action, the actual "
+        "payoff, and the reaction with a natural ending. Reject ordinary gameplay, repetitive driving or travel, "
+        "menus, isolated loud noises, random chat spikes, generic reactions, and moments with no clear payoff. "
+        "Prefer fewer excellent stories over many weak clips. Never invent events. setup_t is the earliest "
+        "moment needed to understand what is happening and why; payoff_t is the actual event or punchline; "
+        "end_t includes the reaction and a natural ending.\n"
         'Reply with JSON only: {"segments": [{"setup_t": seconds, "payoff_t": seconds, "end_t": seconds, '
         '"story_score": 0-100, "category": one of [' + cats + '], "hook": "3-6 word on-screen hook", '
         '"title": "post title, max 70 characters", "description": "one or two sentences", '
@@ -171,8 +176,8 @@ def validate(reply: str, a: float, b: float) -> list:
         pay = _num(s.get("payoff_t"), a - 30.0, b + 30.0)
         if pay is None or not (str(s.get("title") or "").strip() or str(s.get("hook") or "").strip()):
             continue
-        setup = _num(s.get("setup_t"), max(0.0, pay - 60.0), pay) or max(0.0, pay - 15.0)
-        end = _num(s.get("end_t"), pay, pay + 60.0) or pay + 4.0
+        setup = _num(s.get("setup_t"), max(0.0, pay - 120.0), pay) or max(0.0, pay - 15.0)
+        end = _num(s.get("end_t"), pay, pay + 120.0) or pay + 4.0
         cat = str(s.get("category") or "").strip().lower()
         tags = s.get("hashtags") if isinstance(s.get("hashtags"), list) else []
         tags = ["#" + re.sub(r"[^\w]", "", str(t).lstrip("#")) for t in tags][:8]
