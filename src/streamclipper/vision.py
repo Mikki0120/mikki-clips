@@ -303,13 +303,17 @@ def snap_to_overlay(box: list, corner: str, frames: list, face: list) -> list:
         k = int(prof.argmax())
         if prof[k] > 3.0 * max(1e-3, float(np.median(gy[:, c0:c1]))):
             out[3 if top else 1] = (lo + k + 1) / h
-    if left:
+    # A corner webcam is not necessarily glued to the outer edge of the *captured frame*.
+    # Screen recordings often have player letterboxing around the stream, so only snap to an
+    # outer edge when the detected face itself is close to that edge.
+    edge_margin = 0.06
+    if left and fx0 <= edge_margin:
         out[0] = 0.0
-    else:
+    elif not left and fx1 >= 1.0 - edge_margin:
         out[2] = 1.0
-    if top:
+    if top and fy0 <= edge_margin:
         out[1] = 0.0
-    else:
+    elif not top and fy1 >= 1.0 - edge_margin:
         out[3] = 1.0
     # never cut the face: the snapped box must still hold it with a small margin
     out = [
@@ -350,16 +354,21 @@ def classify_layout(video: Path, start: float, end: float, vw: int = 1920, vh: i
     return res
 
 
-def person_box(face: list, corner: str) -> list:
+def person_box(face: list, corner: str, cam_box: list = None) -> list:
     """
-    Normalised box that holds the whole streamer around a corner-cam face: 1.8 face widths to each
-    side (shoulders, arms, hands of a keyed streamer), from 0.6 face heights above the face to the
-    frame bottom for a lower cam, or from the frame top to 3.5 face heights below the face for a top cam.
+    Normalised exclusion box for the streamer. When a detected webcam rectangle is available, use
+    that rectangle as the anchor instead of assuming the camera touches the top/bottom of the captured
+    frame. This avoids excluding large unrelated areas in screen recordings with player letterboxing.
     """
     x0, y0, x1, y1 = face
     fw, fh = x1 - x0, y1 - y0
     bx0, bx1 = max(0.0, x0 - 1.8 * fw), min(1.0, x1 + 1.8 * fw)
-    if str(corner or "").startswith("top"):
+    if cam_box:
+        bx0 = min(bx0, float(cam_box[0]))
+        bx1 = max(bx1, float(cam_box[2]))
+        by0 = max(0.0, min(float(cam_box[1]), y0 - 0.6 * fh))
+        by1 = min(1.0, max(float(cam_box[3]), y1 + 2.0 * fh))
+    elif str(corner or "").startswith("top"):
         by0, by1 = 0.0, min(1.0, y1 + 3.5 * fh)
     else:
         by0, by1 = max(0.0, y0 - 0.6 * fh), 1.0
