@@ -176,7 +176,7 @@ def render_split_panels(
         gw, gh, gx0, gy0 = frame_crop(vw, vh, None, (px0, py0, pw, ph), bot_w / bot_h)
 
     cx0, cy0, cw_, ch_ = grow_to_aspect((px0, py0, pw, ph), vw, vh, top_w / top_h)
-    tag = file_tag(video_path, (cx0, cy0, cw_, ch_), (gw, gh, gx0, gy0), start_s, dur_s, ratio, "v5")
+    tag = file_tag(video_path, (cx0, cy0, cw_, ch_), (gw, gh, gx0, gy0), start_s, dur_s, ratio, "v6")
     rtag = ratio.replace(":", "x")
     face_mp4 = out_dir / f"{video_path.stem}_facecam_{rtag}_{tag}.mp4"
     game_mp4 = out_dir / f"{video_path.stem}_gameplay_{rtag}_{tag}.mp4"
@@ -347,7 +347,7 @@ def _encode_panel(video_path: Path, out_mp4: Path, filter_complex: str, ss_args:
         cmd += ["-map", "0:a:0?", "-c:a", "aac", "-b:a", "192k", "-ar", "48000"]
     else:
         cmd += ["-an"]
-    cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "17", "-pix_fmt", "yuv420p", str(tmp)]
+    cmd += ["-c:v", "libx264", "-preset", "faster", "-crf", "16", "-pix_fmt", "yuv420p", str(tmp)]
     run_cmd(cmd, what)
     os.replace(tmp, out_mp4)
 
@@ -370,7 +370,7 @@ def render_fill_panel(
     vw, vh = meta["width"], meta["height"]
     region = region_px or (0, 0, vw, vh)
     cw, ch, x0, y0 = _fill_crop(region, vw, vh, w / h)
-    tag = file_tag(video_path, (cw, ch, x0, y0), w, h, start_s, dur_s, keep_audio, "v5")
+    tag = file_tag(video_path, (cw, ch, x0, y0), w, h, start_s, dur_s, keep_audio, "v6")
     out = out_dir / f"{Path(video_path).stem}_{name}_{w}x{h}_{tag}.mp4"
     if not out.is_file():
         fc = f"[0:v]crop={cw}:{ch}:{x0}:{y0},scale={w}:{h}:flags=lanczos,setsar=1[v]"
@@ -381,7 +381,7 @@ def render_fill_panel(
 def render_uncut_stack_panel(video_path: Path, out_dir: Path, w: int, h: int, start_s=None, dur_s=None) -> str:
     """Whole 16:9 frame scaled to the panel width (1080x608) over a blurred, darkened fill of the panel."""
     out_dir.mkdir(parents=True, exist_ok=True)
-    tag = file_tag(video_path, w, h, start_s, dur_s, "stack2")
+    tag = file_tag(video_path, w, h, start_s, dur_s, "stack3")
     out = out_dir / f"{Path(video_path).stem}_uncut_{w}x{h}_{tag}.mp4"
     if not out.is_file():
         fc = (
