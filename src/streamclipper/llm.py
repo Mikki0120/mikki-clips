@@ -171,8 +171,8 @@ def validate(reply: str, a: float, b: float) -> list:
         pay = _num(s.get("payoff_t"), a - 30.0, b + 30.0)
         if pay is None or not (str(s.get("title") or "").strip() or str(s.get("hook") or "").strip()):
             continue
-        setup = _num(s.get("setup_t"), max(0.0, pay - 60.0), pay) or max(0.0, pay - 15.0)
-        end = _num(s.get("end_t"), pay, pay + 60.0) or pay + 4.0
+        setup = _num(s.get("setup_t"), max(0.0, pay - 120.0), pay) or max(0.0, pay - 15.0)
+        end = _num(s.get("end_t"), pay, pay + 120.0) or pay + 4.0
         cat = str(s.get("category") or "").strip().lower()
         tags = s.get("hashtags") if isinstance(s.get("hashtags"), list) else []
         tags = ["#" + re.sub(r"[^\w]", "", str(t).lstrip("#")) for t in tags][:8]
