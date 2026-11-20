@@ -229,7 +229,10 @@ def run_pipeline(
         "remove_fillers": bool(remove_fillers),
         "enhance_speech": enhance_speech or "off",
         "brand_kit": str(brand_kit or "").strip(),
-        "hud": hud or "auto",\n        "min_dur": float(min_dur),\n        "target_dur": float(target_dur),\n        "max_dur": float(max_dur),
+        "hud": hud or "auto",
+        "min_dur": float(min_dur),
+        "target_dur": float(target_dur),
+        "max_dur": float(max_dur),
     }
     if opts["brand_kit"] and not Path(opts["brand_kit"]).is_file():
         raise ToolError("The brand kit file was not found.", "check the brand_kit path, or leave it empty")
