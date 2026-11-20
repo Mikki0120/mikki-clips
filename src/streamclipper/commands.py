@@ -476,6 +476,7 @@ def _make_key(opts: dict, args, hook_override: str, numbered: bool) -> str:
         "numbered": numbered,
         "hook": hook_override,
         "render": bool(args.render),
+        "pipeline_revision": "mikki-stacked-framing-quality-v1",
         "draft": not args.no_draft,
         "draft_root": str(args.draft_root or ""),
     }
