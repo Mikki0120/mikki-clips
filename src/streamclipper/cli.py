@@ -313,11 +313,11 @@ def build_parser() -> argparse.ArgumentParser:
     dc.add_argument("--video", "--input", dest="video", default="", help="Local stream video")
     dc.add_argument("--out", required=True, help="Output clips.json (or a folder)")
     _add_select_flags(dc, 0, "clips")
-    dc.add_argument("--min-dur", type=float, default=15.0, help="Shortest clip in seconds")
+    dc.add_argument("--min-dur", type=float, default=20.0, help="Shortest clip in seconds")
     dc.add_argument(
         "--max-dur", type=float, default=60.0, help="Longest clip in seconds (rendered clips stay <= 59.5 s)"
     )
-    dc.add_argument("--target-dur", type=float, default=30.0, help="Preferred clip length in seconds")
+    dc.add_argument("--target-dur", type=float, default=60.0, help="Preferred story clip length in seconds")
     tg = dc.add_mutually_exclusive_group()
     tg.add_argument(
         "--transcribe", dest="transcribe", action="store_true", default=None, help="Force Whisper word timestamps"
