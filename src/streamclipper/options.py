@@ -240,7 +240,7 @@ def clip_layout(src: Path, meta: dict, opts: dict, start: float = None, end: flo
         if layout in CAM_LAYOUTS and game is None:
             # the gameplay panel must not show any part of the streamer (a keyed streamer has no cam
             # border: arms and hands reach far past the face), so crop around the whole person
-            person = person_box(res["face_box"], res["corner"])
+            person = person_box(res["face_box"], res["corner"], res.get("cam_box"))
             aspect = 1080 / 1248 if opts["ratio"] == "9:16" else 1080 / 626
             game = gameplay_box_avoiding(person, vw, vh, aspect)
             opts = dict(opts, person_box=person)
