@@ -125,7 +125,7 @@ def _clip_argv(source: str, work: Path, o: dict) -> list:
                 "use a stream link, or the Drive path of an uploaded file (e.g. /content/drive/MyDrive/my_stream.mp4)",
             )
         argv += ["--input", str(src.resolve())]
-    argv += ["--max-clips", str(int(o["max_clips"])), "--min-score", str(float(o["min_score"]))]
+    argv += ["--max-clips", str(int(o["max_clips"])), "--min-score", str(float(o["min_score"]))]\n    argv += ["--min-dur", str(float(o["min_dur"])), "--target-dur", str(float(o["target_dur"])), "--max-dur", str(float(o["max_dur"]))]
     argv += ["--llm", o["llm"], "--whisper-model", o["whisper_model"]]
     argv += ["--device", o["device"], "--language", o["language"]]
     for flag, key in (
@@ -186,6 +186,9 @@ def run_pipeline(
     enhance_speech: str = "off",
     brand_kit: str = "",
     hud: str = "auto",
+    min_dur: float = 20.0,
+    target_dur: float = 60.0,
+    max_dur: float = 120.0,
 ) -> dict:
     """
     Stream -> ranked clips (clips.json, clips.csv, index.html) -> MP4s + thumbnails (render) -> portable
@@ -225,7 +228,7 @@ def run_pipeline(
         "remove_fillers": bool(remove_fillers),
         "enhance_speech": enhance_speech or "off",
         "brand_kit": str(brand_kit or "").strip(),
-        "hud": hud or "auto",
+        "hud": hud or "auto",\n        "min_dur": float(min_dur),\n        "target_dur": float(target_dur),\n        "max_dur": float(max_dur),
     }
     if opts["brand_kit"] and not Path(opts["brand_kit"]).is_file():
         raise ToolError("The brand kit file was not found.", "check the brand_kit path, or leave it empty")
