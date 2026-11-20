@@ -164,6 +164,20 @@ def test_llm_segment_attaches_to_at_most_one_clip():
     assert all(c["title"] and c["description"] and c["hashtags"] for c in doc["clips"])
 
 
+def test_gaming_prompt_prioritizes_complete_context_and_payoff():
+    prompt = llm.build_prompt("[00:01] he is driving to the bank", "en", "gaming")
+    assert "30-120 second gaming stories" in prompt
+    assert "ordinary gameplay" in prompt
+    assert "actual payoff" in prompt
+    # LLM setup may legitimately begin up to two minutes before the payoff.
+    segs = llm.validate(
+        json.dumps({"segments": [{"setup_t": 1, "payoff_t": 110, "end_t": 119,
+                                 "story_score": 90, "hook": "THE ESCAPE", "title": "The escape"}]}),
+        100, 120
+    )
+    assert len(segs) == 1 and segs[0]["setup_t"] == 1
+
+
 def test_language_rule_follows_the_stream():
     assert "plain, natural English" in llm.build_prompt("[00:01] no way bro", "en")
     assert "Devanagari" in llm.build_prompt("[00:01] अरे भाई क्या हुआ", "hi")
