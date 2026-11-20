@@ -175,8 +175,12 @@ def render_split_panels(
     else:  # a lower or tall cam: shift the gameplay crop sideways so the face is not shown twice
         gw, gh, gx0, gy0 = frame_crop(vw, vh, None, (px0, py0, pw, ph), bot_w / bot_h)
 
-    cx0, cy0, cw_, ch_ = grow_to_aspect((px0, py0, pw, ph), vw, vh, top_w / top_h)
-    tag = file_tag(video_path, (cx0, cy0, cw_, ch_), (gw, gh, gx0, gy0), start_s, dur_s, ratio, "v6")
+    # Keep the facecam panel strictly inside the detected webcam rectangle. Growing a small
+    # webcam box sideways to fill a wide panel pulls in the surrounding gameplay/display, which
+    # makes the "facecam" look like a second copy of the game. Use a blurred, enlarged copy of
+    # the webcam crop as the background and fit the actual camera crop on top without distortion.
+    cx0, cy0, cw_, ch_ = px0, py0, pw, ph
+    tag = file_tag(video_path, (cx0, cy0, cw_, ch_), (gw, gh, gx0, gy0), start_s, dur_s, ratio, "v7")
     rtag = ratio.replace(":", "x")
     face_mp4 = out_dir / f"{video_path.stem}_facecam_{rtag}_{tag}.mp4"
     game_mp4 = out_dir / f"{video_path.stem}_gameplay_{rtag}_{tag}.mp4"
@@ -184,8 +188,11 @@ def render_split_panels(
 
     if not face_mp4.is_file():
         fc = (
-            f"[0:v]crop={cw_}:{ch_}:{cx0}:{cy0},scale={top_w}:{top_h}:force_original_aspect_ratio=increase,"
-            f"crop={top_w}:{top_h},setsar=1[v]"
+            f"[0:v]crop={cw_}:{ch_}:{cx0}:{cy0},split=2[cam_bg][cam_fg];"
+            f"[cam_bg]scale={top_w}:{top_h}:force_original_aspect_ratio=increase,"
+            f"crop={top_w}:{top_h},boxblur=24:12[bg];"
+            f"[cam_fg]scale={top_w}:{top_h}:force_original_aspect_ratio=decrease[fg];"
+            f"[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1[v]"
         )
         _encode_panel(video_path, face_mp4, fc, ss_args, keep_audio=False, what="facecam panel render")
 
