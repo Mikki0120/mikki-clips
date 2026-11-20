@@ -253,12 +253,11 @@ def run_pipeline(
 
     result = collect_outputs(out, summary, droot if drafts else None)
     failed = [name for name, ok in summary["gate"] if not ok]
+    # A failed export must not hide the clips that passed. Returning the report lets Colab
+    # display the successful previews and the user inspect the failed clip's diagnostics.
+    result["failed_mp4s"] = failed
     if failed:
-        raise ToolError(
-            f"{len(failed)} MP4(s) failed the export gate: {', '.join(failed)} (see the tables above). "
-            "The other outputs are saved.",
-            f"check {fwd(out)}; re-run with other settings or skip those clips",
-        )
+        print(f"WARNING: {len(failed)} MP4 export(s) failed: {', '.join(failed)}. Successful clips and reports are still available.")
     return result
 
 
