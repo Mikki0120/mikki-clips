@@ -81,6 +81,29 @@ def test_large_cutout_corner_cam_stays_corner():
     assert res["kind"] == "corner-cam" and res["corner"] == "bottom_left"
 
 
+def test_inset_top_left_cam_does_not_snap_to_outer_top_edge():
+    import numpy as np
+
+    from streamclipper.vision import pad_cam_box, snap_to_overlay
+
+    face = _face(0.12, 0.38, 0.12)
+    box = pad_cam_box(face, "top_left")
+    snapped = snap_to_overlay(box, "top_left", [np.zeros((90, 160), dtype=np.uint8)], face)
+    assert snapped[0] == 0.0  # the cam is flush with the left edge
+    assert snapped[1] > 0.1  # but it is inset vertically in the captured frame
+
+
+def test_person_box_uses_inset_webcam_bounds():
+    from streamclipper.vision import person_box
+
+    face = _face(0.12, 0.38, 0.12)
+    cam = [0.0, 0.22, 0.21, 0.52]
+    person = person_box(face, "top_left", cam)
+    assert person[0] <= cam[0] and person[2] >= cam[2]
+    assert person[1] > 0.0 and person[1] <= face[1]
+    assert person[3] >= cam[3] and person[3] < 0.9
+
+
 def test_full_cam_from_big_centred_face():
     faces = [[_face(0.5, 0.45, 0.4)] for _ in range(6)] + [[], []]
     res = classify_faces(faces)
