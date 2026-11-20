@@ -315,7 +315,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_select_flags(dc, 0, "clips")
     dc.add_argument("--min-dur", type=float, default=20.0, help="Shortest clip in seconds")
     dc.add_argument(
-        "--max-dur", type=float, default=60.0, help="Longest clip in seconds (rendered clips stay <= 59.5 s)"
+        "--max-dur", type=float, default=120.0, help="Longest story clip in seconds (up to 2 minutes)"
     )
     dc.add_argument("--target-dur", type=float, default=60.0, help="Preferred story clip length in seconds")
     tg = dc.add_mutually_exclusive_group()
