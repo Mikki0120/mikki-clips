@@ -125,7 +125,8 @@ def _clip_argv(source: str, work: Path, o: dict) -> list:
                 "use a stream link, or the Drive path of an uploaded file (e.g. /content/drive/MyDrive/my_stream.mp4)",
             )
         argv += ["--input", str(src.resolve())]
-    argv += ["--max-clips", str(int(o["max_clips"])), "--min-score", str(float(o["min_score"]))]\n    argv += ["--min-dur", str(float(o["min_dur"])), "--target-dur", str(float(o["target_dur"])), "--max-dur", str(float(o["max_dur"]))]
+    argv += ["--max-clips", str(int(o["max_clips"])), "--min-score", str(float(o["min_score"]))]
+    argv += ["--min-dur", str(float(o["min_dur"])), "--target-dur", str(float(o["target_dur"])), "--max-dur", str(float(o["max_dur"]))]
     argv += ["--llm", o["llm"], "--whisper-model", o["whisper_model"]]
     argv += ["--device", o["device"], "--language", o["language"]]
     for flag, key in (
