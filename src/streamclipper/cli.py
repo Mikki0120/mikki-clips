@@ -357,7 +357,7 @@ def build_parser() -> argparse.ArgumentParser:
     cs.add_argument("--target-dur", type=float, default=60.0, help="Target story clip duration in seconds")
     cs.add_argument("--min-dur", type=float, default=20.0, help="Shortest clip in seconds")
     cs.add_argument(
-        "--max-dur", type=float, default=60.0, help="Longest clip in seconds (rendered clips stay <= 59.5 s)"
+        "--max-dur", type=float, default=120.0, help="Longest story clip in seconds (up to 2 minutes)"
     )
     cs.add_argument("--db", type=float, default=-48.0, help="RMS gate in dB")
     cs.add_argument("--min-pause", type=float, default=0.55, help="Pauses shorter than this stay inside a clip")
