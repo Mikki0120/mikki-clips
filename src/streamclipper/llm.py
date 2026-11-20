@@ -104,8 +104,13 @@ def build_prompt(text: str, language: str = "en", content: str = "gaming") -> st
     return (
         "You are a short-form video editor. Below is part of a live-stream transcript; each line starts with "
         "its [mm:ss] time in the stream.\n"
-        "Find every moment that can be a viral 15-45 second vertical clip with a clear story: setup, tension, "
-        "payoff, reaction.\n"
+        "Find only genuinely entertaining, self-contained 30-120 second gaming stories. Preserve the full "
+        "context a new viewer needs, the streamer’s setup/commentary, rising tension or action, the actual "
+        "payoff, and the reaction with a natural ending. Reject ordinary gameplay, repetitive driving or travel, "
+        "menus, isolated loud noises, random chat spikes, generic reactions, and moments with no clear payoff. "
+        "Prefer fewer excellent stories over many weak clips. Never invent events. setup_t is the earliest "
+        "moment needed to understand what is happening and why; payoff_t is the actual event or punchline; "
+        "end_t includes the reaction and a natural ending.\n"
         'Reply with JSON only: {"segments": [{"setup_t": seconds, "payoff_t": seconds, "end_t": seconds, '
         '"story_score": 0-100, "category": one of [' + cats + '], "hook": "3-6 word on-screen hook", '
         '"title": "post title, max 70 characters", "description": "one or two sentences", '
