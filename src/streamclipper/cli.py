@@ -354,8 +354,8 @@ def build_parser() -> argparse.ArgumentParser:
     cs.add_argument("--font", choices=list(OPT_CHOICES["font"]), default=None, help="Old name of --caption-font")
     cs.add_argument("--hook-text", default="", help="Hook banner text; \\n starts a new line (default: auto)")
     _add_select_flags(cs, 3, "drafts (all clips go to clips.json)")
-    cs.add_argument("--target-dur", type=float, default=30.0, help="Target clip duration in seconds")
-    cs.add_argument("--min-dur", type=float, default=15.0, help="Shortest clip in seconds")
+    cs.add_argument("--target-dur", type=float, default=60.0, help="Target story clip duration in seconds")
+    cs.add_argument("--min-dur", type=float, default=20.0, help="Shortest clip in seconds")
     cs.add_argument(
         "--max-dur", type=float, default=60.0, help="Longest clip in seconds (rendered clips stay <= 59.5 s)"
     )
